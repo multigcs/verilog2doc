@@ -175,6 +175,7 @@ def verilog2doc(args):
             continue
 
         verilogData = open(verilog_file, "r").read()
+        verilogDataOrg = verilogData
         verilogData = re.sub(r"//.*", "", verilogData)
         verilogData = re.sub(r"/\*.*\*/", "", verilogData)
         for result in patternModule.finditer(verilogData):
@@ -194,7 +195,6 @@ def verilog2doc(args):
 
             args = []
             for arg in result.group("args").split("\n"):
-                # print(arg)
                 if arg.startswith("`"):
                     args.append(f"{arg},")
                 else:
@@ -207,6 +207,12 @@ def verilog2doc(args):
 
                 arg = re.sub(r"\s+", " ", larg.strip())
 
+                # try to find comment
+                if larg.strip():
+                    for line in verilogDataOrg.split("\n"):
+                        if "//" in line and larg.strip() in line:
+                            moduleArg["comment"] = line.split("//")[-1].strip()
+
                 if arg.startswith("`"):
                     if arg.startswith(("`ifndef", "`ifdef")):
                         defines.append(arg)
@@ -214,7 +220,6 @@ def verilog2doc(args):
                         defines.pop()
                 else:
                     moduleArg["defines"] = defines.copy()
-
                     argm = patternArg.search(arg)
                     if argm:
                         if argm["dir"]:
@@ -784,11 +789,11 @@ def verilog2doc(args):
 
             fd.write("<h3>Module-Ports</h3>\n")
             fd.write("<table width=90%>\n")
-            fd.write(f'<tr bgcolor="{table_color}"><th>direction</th><th>type</th><th>name</th><th>size</th><th>defines</th></tr>\n')
+            fd.write(f'<tr bgcolor="{table_color}"><th>direction</th><th>type</th><th>name</th><th>size</th><th>defines</th><th>comment</th></tr>\n')
             rn = 0
             for argName, arg in module["args"].items():
                 color = row_colors[rn % 2]
-                fd.write(f'<tr bgcolor="{color}"><td>{arg.get("direction", "")}</td><td>{arg.get("signed", "")} {arg.get("type", "")}</td><td>{argName}</td><td>{arg.get("size", "")}</td><td>{arg.get("defines") or ""}</td></tr>\n')
+                fd.write(f'<tr bgcolor="{color}"><td>{arg.get("direction", "")}</td><td>{arg.get("signed", "")} {arg.get("type", "")}</td><td>{argName}</td><td>{arg.get("size", "")}</td><td>{arg.get("defines") or ""}</td><td>{arg.get("comment") or ""}</td></tr>\n')
                 rn += 1
             fd.write("</table>\n")
             fd.write("<br>\n")
