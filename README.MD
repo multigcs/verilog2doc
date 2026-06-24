@@ -2,6 +2,9 @@
 
 https://cserver1.multixmedia.org/verilog2doc/
 
+![sample.svg](sample.svg)
+
+
 # Quickstart
 ```
 $ python3 verilog2doc.py ../riocore/Output/ICEBreakerV1.0e/Gateware/board0/*.v
