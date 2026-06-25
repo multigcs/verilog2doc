@@ -2,6 +2,7 @@ import argparse
 import glob
 import os
 import re
+import subprocess
 import zipfile
 
 import graphviz
@@ -155,6 +156,7 @@ def verilog2doc(args):
     netlist = args.netlist
     inline = args.inline
     pin_file = args.pins
+    linter = args.linter
     patternModule = re.compile(r"module\s+(?P<name>\w+)(?P<params>\s*#\([^\)]*\))?\s*\((?P<args>[^\)]*)\)\s*;(?P<data>[\s\S]*?(?=endmodule))endmodule")
     patternParams = re.compile(r"(?P<parameter>parameter(\s+)(\w+)(\s*=\s*([0-9]+|{([^}]*)})?)?)")
     patternParam = re.compile(r"parameter(?P<type>\s+[a-zA-Z]+)?(?P<size>\s*\[.*\])?(?P<name>\s+\w+)\s*(?P<default>=.*)")
@@ -165,15 +167,18 @@ def verilog2doc(args):
 
     modules = {}
     globals_v = ""
+    dirnames = []
     for verilog_file in verilogs:
         if os.path.basename(verilog_file) == "globals.v":
             globals_v = verilog_file
+            dirname = os.path.dirname(verilog_file)
+            if dirname not in dirnames:
+                dirnames.append(dirname)
 
     for verilog_file in verilogs:
         verilog_basename = os.path.basename(verilog_file)
         if verilog_basename == "globals.v":
             continue
-
         verilogData = open(verilog_file, "r").read()
         verilogDataOrg = verilogData
         verilogData = re.sub(r"//.*", "", verilogData)
@@ -315,6 +320,9 @@ def verilog2doc(args):
     fd.write("<br/>\n")
     fd.write("Modules:<br/>\n")
     dependsGraph2menu(fd, dependsGraph, "|&nbsp;")
+    fd.write("<br/>")
+    if linter:
+        fd.write("<a target='main' href='linter.html'>Linter-Output</a><br/>\n")
     fd.write("</html>")
     fd.close()
 
@@ -395,9 +403,47 @@ def verilog2doc(args):
     gAll = graphviz.Digraph("G", format="svg")
     gAll.attr(rankdir="LR")
 
+    fileerrors = {}
+    if linter:
+        verilator = ["verilator", "--lint-only", "-Wno-WIDTHEXPAND", *verilogs]
+        result = subprocess.run(verilator, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+
+        if result.stderr:
+            outputs = []
+            for line in result.stderr.decode().split("\n"):
+                if "no search path specified with" in line:
+                    continue
+                if line and line[0] == "%":
+                    # msgtype = line.split()[0]
+                    filename = ":".join(line.split()[1].split(":")[:-3])
+                    if filename not in fileerrors:
+                        fileerrors[filename] = []
+                    outputs = fileerrors[filename]
+                    outputs.append("")
+                    outputs.append("")
+                    outputs.append(line)
+                else:
+                    outputs.append(line)
+
+        fd = open(f"{output}/linter.html", "w")
+        fd.write("<html>")
+        fd.write(html_begin)
+        fd.write("\n")
+
+        fd.write("<h3>Linter-Output</h3>\n")
+        for filename, errors in fileerrors.items():
+            if filename:
+                fd.write(f'filename: <a href="{os.path.basename(filename)}.html">{filename}</a><br/>')
+            fd.write("<pre><code>")
+            for error in errors:
+                fd.write(error.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+                fd.write("\n")
+            fd.write("</code></pre>")
+        fd.write(html_end)
+        fd.close()
+
     cluster_n = 0
     edges_all = {}
-
     for verilog_file in verilogs:
         basename = verilog_file.split("/")[-1]
         fd = open(f"{output}/{basename}.html", "w")
@@ -822,12 +868,23 @@ def verilog2doc(args):
                 fd.write(f'<center><a target="_blank" href="{os.path.basename(dotsvgs[verilog_file])}"><img width="90%" src="{os.path.basename(dotsvgs[verilog_file])}" /></a></center>')
                 fd.write("<hr/>\n")
 
-            fd.write("<h3>Verilog-Source</h3>\n")
-            fd.write(f"File: {module['filename']}<br />")
-            fd.write("<pre><code class='language-verilog'>")
-            fd.write(module["filedata"])
+        fd.write("<h3>Verilog-Source</h3>\n")
+        fd.write(f"File: {verilog_file}<br /><br />")
+
+        if verilog_file in fileerrors:
+            fd.write("<b>Linter-Output:</b><br/>\n")
+            fd.write("<pre><code>")
+            for line in fileerrors[verilog_file]:
+                fd.write(line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+                fd.write("\n")
             fd.write("</code></pre>")
-            fd.write("<hr/>\n")
+            fd.write("<br/>\n")
+
+        fd.write("<b>Source:</b><br/>\n")
+        fd.write("<pre><code class='language-verilog'>")
+        fd.write(module["filedata"])
+        fd.write("</code></pre>")
+        fd.write("<hr/>\n")
 
         fd.write(html_end)
         fd.close()
@@ -894,6 +951,7 @@ if __name__ == "__main__":
     parser.add_argument("--netlist", "-n", help="gen netlist graphs (yosys dot)", type=int, default=0)
     parser.add_argument("--inline", "-i", help="inline svg", type=int, default=1)
     parser.add_argument("--pins", "-p", help="pins file (cst/pcf/lpf)", type=str, default="")
+    parser.add_argument("--linter", "-l", help="add verilator linter output", type=int, default=0)
     sargs = parser.parse_args()
 
     verilog2doc(sargs)
