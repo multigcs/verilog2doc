@@ -376,6 +376,14 @@ def verilog2doc(args):
             "style": style,
         }
 
+    def add_edgeMin(edges, port_from, port_to, direction="forward", style=None):
+        edges_allMin[f"{port_from}--{port_to}"] = {
+            "from": port_from,
+            "to": port_to,
+            "dir": direction,
+            "style": style,
+        }
+
     def instance_get(sub):
         instance_name = f"{sub[0]}?"
         portmapping = {}
@@ -402,6 +410,9 @@ def verilog2doc(args):
 
     gAll = graphviz.Digraph("G", format="svg")
     gAll.attr(rankdir="LR")
+
+    gAllMin = graphviz.Digraph("G", format="svg")
+    gAllMin.attr(rankdir="LR")
 
     fileerrors = {}
     if linter:
@@ -444,6 +455,7 @@ def verilog2doc(args):
 
     cluster_n = 0
     edges_all = {}
+    edges_allMin = {}
     for verilog_file in verilogs:
         basename = verilog_file.split("/")[-1]
         fd = open(f"{output}/{basename}.html", "w")
@@ -532,7 +544,14 @@ def verilog2doc(args):
                             gSub.edge(f"PINS:{argName}", f"{moduleName}:{argName}", dir=arrow)
                             gAll.edge(f"PINS:{argName}", f"{moduleName}:{argName}", dir=arrow)
                             gPins.edge(f"PINS:{argName}", f"{moduleName}:{argName}", dir=arrow)
-                    label = f'<<table color="#FFFFFF" bgcolor="{table_color}" border="0" cellborder="0" cellspacing="1" style="rounded"><tr><td colspan="2"><font color="{th_font_color}">{pin_filename}</font></td></tr>{"".join(pins)}<tr><td><FONT POINT-SIZE="4"> </FONT></td></tr></table>>'
+
+                    gAllMin.edge(
+                        "PINS",
+                        moduleName,
+                        dir="none",
+                    )
+
+                    label = f'<<table bgcolor="{table_color}" border="0" cellborder="0" cellspacing="1" style="rounded"><tr><td colspan="2"><font color="{th_font_color}">{pin_filename}</font></td></tr>{"".join(pins)}<tr><td><FONT POINT-SIZE="4"> </FONT></td></tr></table>>'
                     gSub.node(
                         "PINS",
                         shape="none",
@@ -558,12 +577,22 @@ def verilog2doc(args):
                         href="pins.html",
                     )
 
+                    labelMin = f'<<table bgcolor="{table_color}" border="0" cellborder="0" cellspacing="1" style="rounded"><tr><td colspan="2"><font color="{th_font_color}">{pin_filename}</font></td></tr></table>>'
+                    gAllMin.node(
+                        "PINS",
+                        shape="none",
+                        label=labelMin,
+                        fontsize="11pt",
+                        tooltip=f"FPGA-Pins: {pin_filename}",
+                        href="pins.html",
+                    )
+
             with gSub.subgraph(name="cluster_0") as c:
-                c.attr(style="filled,rounded", color="lightgrey")
+                c.attr(style="filled,rounded", color="#EFEFEF")
                 c.attr(label=f"{os.path.basename(verilog_file)} / {moduleName}")
                 c.attr(margin="10")
 
-                label = f'<<table color="#FFFFFF" bgcolor="{table_color}" border="0" cellborder="0" cellspacing="1" style="rounded"><tr><td><font color="{th_font_color}">{moduleName}</font></td></tr>{"".join(params)}<tr><td><FONT POINT-SIZE="1"> </FONT></td></tr>{"".join(ports)}<tr><td><FONT POINT-SIZE="4"> </FONT></td></tr></table>>'
+                label = f'<<table bgcolor="{table_color}" border="0" cellborder="0" cellspacing="1" style="rounded"><tr><td><font color="{th_font_color}">{moduleName}</font></td></tr>{"".join(params)}<tr><td><FONT POINT-SIZE="1"> </FONT></td></tr>{"".join(ports)}<tr><td><FONT POINT-SIZE="4"> </FONT></td></tr></table>>'
                 c.node(
                     moduleName,
                     shape="none",
@@ -599,7 +628,7 @@ def verilog2doc(args):
                                 color = row_colors[len(sports) % 2]
                                 sports.append(f'<tr><td bgcolor="{color}" port="{argName}"><font color="{td_font_color}">{ptitle}</font></td></tr>')
 
-                        label = f'<<table color="#FFFFFF" bgcolor="{table_color}" border="0" cellborder="0" cellspacing="1" style="rounded"><tr><td><font color="{th_font_color}">{instance_name}</font></td></tr>{"".join(sargs)}<tr><td><FONT POINT-SIZE="1"> </FONT></td></tr>{"".join(sports)}<tr><td><FONT POINT-SIZE="4"> </FONT></td></tr></table>>'
+                        label = f'<<table bgcolor="{table_color}" border="0" cellborder="0" cellspacing="1" style="rounded"><tr><td><font color="{th_font_color}">{instance_name}</font></td></tr>{"".join(sargs)}<tr><td><FONT POINT-SIZE="1"> </FONT></td></tr>{"".join(sports)}<tr><td><FONT POINT-SIZE="4"> </FONT></td></tr></table>>'
 
                         group = ""
                         if not sub_first:
@@ -636,7 +665,7 @@ def verilog2doc(args):
                             color = row_colors[len(sports) % 2]
                             sports.append(f'<tr><td bgcolor="{color}" port="{argName}"><font color="{td_font_color}">{ptitle}</font></td></tr>')
                         instance_name = sub[0]
-                        label = f'<<table color="#FFFFFF" bgcolor="{table_color}" border="0" cellborder="0" cellspacing="1" style="rounded"><tr><td><font color="{th_font_color}">{instance_name}</font></td></tr>{"".join(sargs)}<tr><td><FONT POINT-SIZE="1"> </FONT></td></tr>{"".join(sports)}<tr><td><FONT POINT-SIZE="4"> </FONT></td></tr></table>>'
+                        label = f'<<table bgcolor="{table_color}" border="0" cellborder="0" cellspacing="1" style="rounded"><tr><td><font color="{th_font_color}">{instance_name}</font></td></tr>{"".join(sargs)}<tr><td><FONT POINT-SIZE="1"> </FONT></td></tr>{"".join(sports)}<tr><td><FONT POINT-SIZE="4"> </FONT></td></tr></table>>'
                         c.node(
                             f"{moduleName}_{instance_name}",
                             shape="none",
@@ -649,11 +678,11 @@ def verilog2doc(args):
 
             cluster_n += 1
             with gAll.subgraph(name=f"cluster_{cluster_n}") as c:
-                c.attr(style="filled,rounded", color="lightgrey")
+                c.attr(style="filled,rounded", color="#EFEFEF")
                 c.attr(label=f"{os.path.basename(verilog_file)} / {moduleName}")
                 c.attr(margin="10")
 
-                label = f'<<table color="#FFFFFF" bgcolor="{table_color}" border="0" cellborder="0" cellspacing="1" style="rounded"><tr><td><font color="{th_font_color}">{moduleName}</font></td></tr>{"".join(ports)}<tr><td><FONT POINT-SIZE="4"> </FONT></td></tr></table>>'
+                label = f'<<table bgcolor="{table_color}" border="0" cellborder="0" cellspacing="1" style="rounded"><tr><td><font color="{th_font_color}">{moduleName}</font></td></tr>{"".join(ports)}<tr><td><FONT POINT-SIZE="4"> </FONT></td></tr></table>>'
                 c.node(
                     moduleName,
                     shape="none",
@@ -680,7 +709,7 @@ def verilog2doc(args):
                                 color = row_colors[len(sports) % 2]
                                 sports.append(f'<tr><td bgcolor="{color}" port="{argName}"><font color="{td_font_color}">{ptitle}</font></td></tr>')
 
-                        label = f'<<table color="#FFFFFF" bgcolor="{table_color}" border="0" cellborder="0" cellspacing="1" style="rounded"><tr><td><font color="{th_font_color}">{instance_name}</font></td></tr>{"".join(sports)}<tr><td><FONT POINT-SIZE="4"> </FONT></td></tr></table>>'
+                        label = f'<<table bgcolor="{table_color}" border="0" cellborder="0" cellspacing="1" style="rounded"><tr><td><font color="{th_font_color}">{instance_name}</font></td></tr>{"".join(sports)}<tr><td><FONT POINT-SIZE="4"> </FONT></td></tr></table>>'
 
                         group = ""
                         if not sub_first:
@@ -701,6 +730,48 @@ def verilog2doc(args):
                             f"{moduleName}_{instance_name}",
                             dir="none",
                             style="invis",
+                            fontsize="11pt",
+                        )
+
+            with gAllMin.subgraph(name=f"cluster_{cluster_n}") as c:
+                c.attr(style="filled,rounded", color="#EFEFEF")
+                c.attr(label=f"{os.path.basename(verilog_file)}/{moduleName}")
+                c.attr(ranksep="0.1")
+                c.attr(margin="0")
+                label = f'<<table bgcolor="{table_color}" border="0" cellborder="0" cellspacing="1" style="rounded"><tr><td><font color="{th_font_color}">{moduleName}</font></td></tr></table>>'
+                c.node(
+                    moduleName,
+                    shape="none",
+                    label=label,
+                    fontsize="11pt",
+                    href=f"{verilog_file.split('/')[-1]}.html#{moduleName}",
+                    tooltip=f"Module-Header: {moduleName}\\nFilename: {os.path.basename(verilog_file)}",
+                    group="g1",
+                )
+                sub_first = None
+                for sub in module["sub"]:
+                    if sub[0] in modules:
+                        instance_name, portmapping, paramapping = instance_get(sub)
+                        label = f'<<table bgcolor="{table_color}" border="0" cellborder="0" cellspacing="1" style="rounded"><tr><td><font color="{th_font_color}">{instance_name}</font></td></tr></table>>'
+                        group = ""
+                        if not sub_first:
+                            sub_first = instance_name
+                            group = "g1"
+
+                        c.node(
+                            f"{moduleName}_{instance_name}",
+                            shape="none",
+                            label=label,
+                            fontsize="11pt",
+                            href=f"{verilog_file.split('/')[-1]}.html#{moduleName}",
+                            tooltip=f"Instance: {instance_name} -> {sub[0]}",
+                            group=group,
+                        )
+                        c.edge(
+                            moduleName,
+                            f"{moduleName}_{instance_name}",
+                            dir="none",
+                            # style="invis",
                             fontsize="11pt",
                         )
 
@@ -742,7 +813,7 @@ def verilog2doc(args):
                                     new_ports[n] = np.replace(f">{splitted[0]}", f">{splitted[1]}")
 
                         filename = moduleFrom["filename"]
-                        label = f'<<table color="#FFFFFF" bgcolor="{table_color}" border="0" cellborder="0" cellspacing="1" style="rounded"><tr><td><font color="{th_font_color}">{moduleNameFrom}/{instance_name}</font></td></tr>{"".join(new_params)}<tr><td><FONT POINT-SIZE="1"> </FONT></td></tr>{"".join(new_ports)}<tr><td><FONT POINT-SIZE="4"> </FONT></td></tr></table>>'
+                        label = f'<<table bgcolor="{table_color}" border="0" cellborder="0" cellspacing="1" style="rounded"><tr><td><font color="{th_font_color}">{moduleNameFrom}/{instance_name}</font></td></tr>{"".join(new_params)}<tr><td><FONT POINT-SIZE="1"> </FONT></td></tr>{"".join(new_ports)}<tr><td><FONT POINT-SIZE="4"> </FONT></td></tr></table>>'
                         gSub.node(
                             mname,
                             shape="none",
@@ -774,6 +845,13 @@ def verilog2doc(args):
                                         f"{moduleName}:{argName}",
                                         "back",
                                     )
+
+                        add_edgeMin(
+                            sub_edges,
+                            f"{mname}",
+                            f"{moduleName}",
+                            "none",
+                        )
 
             # linked sub modules
             for sub in module["sub"]:
@@ -817,7 +895,7 @@ def verilog2doc(args):
                                     "back",
                                 )
 
-                    label = f'<<table color="#FFFFFF" bgcolor="{table_color}" border="0" cellborder="0" cellspacing="1" style="rounded"><tr><td><font color="{th_font_color}">{sub[0]}</font></td></tr>{"".join(sargs)}<tr><td><FONT POINT-SIZE="1"> </FONT></td></tr>{"".join(sports)}<tr><td><FONT POINT-SIZE="4"> </FONT></td></tr></table>>'
+                    label = f'<<table bgcolor="{table_color}" border="0" cellborder="0" cellspacing="1" style="rounded"><tr><td><font color="{th_font_color}">{sub[0]}</font></td></tr>{"".join(sargs)}<tr><td><FONT POINT-SIZE="1"> </FONT></td></tr>{"".join(sports)}<tr><td><FONT POINT-SIZE="4"> </FONT></td></tr></table>>'
                     filename = modules[sub[0]]["filename"]
                     gSub.node(
                         sub[0],
@@ -893,6 +971,10 @@ def verilog2doc(args):
         if not edge["style"]:
             gAll.edge(edge["from"], edge["to"], dir=edge["dir"], style=edge["style"])
 
+    for name, edge in edges_allMin.items():
+        if not edge["style"]:
+            gAllMin.edge(edge["from"], edge["to"], dir=edge["dir"], style=edge["style"])
+
     fd = open(f"{output}/pins.html", "w")
     fd.write("<html>")
     fd.write(html_begin)
@@ -923,6 +1005,12 @@ def verilog2doc(args):
     # fd.write(html_menu(modules, dependsGraph))
     # fd.write(f"<div id=\"main\" class=\"tabcontent\">")
     fd.write("\n")
+
+    fd.write("<center><table width=70% height=70%><tr><td>")
+    svg_img(gAllMin, "minmain")
+    fd.write("</td></tr></table></center>")
+    fd.write("<br/>")
+    fd.write("<br/>")
 
     fd.write("<center><table width=70% height=70%><tr><td>")
     svg_img(gAll, "main")
