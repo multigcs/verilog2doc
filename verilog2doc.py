@@ -489,7 +489,7 @@ def verilog2doc(args):
             if top == moduleName:
                 # read and link pins
                 pinmapping = {}
-                for suffix in ("cst", "pcf", "lpf"):
+                for suffix in ("cst", "pcf", "lpf", "ucf"):
                     if not pin_file:
                         for filepath in glob.glob(os.path.join(os.path.dirname(module["filename"]), f"*.{suffix}")):
                             pin_file = filepath
@@ -520,6 +520,14 @@ def verilog2doc(args):
                             if line.startswith("LOCATE COMP "):
                                 realpin = line.split()[-1].strip('";')
                                 pin_name = line.split()[-3].strip('";')
+                                pinmapping[pin_name] = {
+                                    "pin": realpin,
+                                }
+                    elif pin_type == "ucf":
+                        for line in open(pin_file, "r").read().split("\n"):
+                            if line.startswith("NET "):
+                                realpin = line.split('"')[3]
+                                pin_name = line.split('"')[1]
                                 pinmapping[pin_name] = {
                                     "pin": realpin,
                                 }
