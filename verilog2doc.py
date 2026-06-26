@@ -3,6 +3,7 @@ import glob
 import os
 import re
 import subprocess
+import xml.etree.ElementTree as ET
 import zipfile
 
 import graphviz
@@ -157,6 +158,51 @@ def verilog2doc(args):
     inline = args.inline
     pin_file = args.pins
     linter = args.linter
+    fpga_type = ""
+
+    if len(args.verilog) == 1 and args.verilog[0].endswith(".gprj"):
+        print(f"reading files from gowin project: {os.path.basename(args.verilog[0])}")
+        verilogs = []
+        gprjdir = os.path.dirname(args.verilog[0])
+        tree = ET.parse(args.verilog[0])
+        root = tree.getroot()
+
+        device = root.find("Device")
+        if device is not None:
+            fpga_type = device.get("pn", device.text)
+
+        for fileentry in root.findall("FileList/File"):
+            if fileentry.get("enable", "1") != "1":
+                continue
+            if fileentry.get("type") == "file.verilog":
+                verilogs.append(os.path.join(gprjdir, fileentry.get("path")))
+            elif fileentry.get("type") == "file.cst" and not pin_file:
+                pin_file = os.path.join(gprjdir, fileentry.get("path"))
+
+    elif len(args.verilog) == 1 and args.verilog[0].endswith(".prj"):
+        print(f"reading files from ise prj: {os.path.basename(args.verilog[0])}")
+        verilogs = []
+        prjdir = os.path.dirname(args.verilog[0])
+        data = open(args.verilog[0], "r").read()
+        for line in data.split("\n"):
+            if line.startswith("verilog work "):
+                verilogs.append(os.path.join(prjdir, line.split('"')[1]))
+
+    elif len(args.verilog) == 1 and args.verilog[0].endswith(".xst"):
+        print(f"reading files from xst: {os.path.basename(args.verilog[0])}")
+        verilogs = []
+        prjdir = os.path.dirname(args.verilog[0])
+        xstdata = open(args.verilog[0], "r").read()
+        for line in xstdata.split("\n"):
+            if line.startswith("-p "):
+                fpga_type = line.split()[-1]
+            elif line.startswith("-ifn "):
+                prjfile = os.path.join(prjdir, line.split()[-1])
+                data = open(prjfile, "r").read()
+                for vline in data.split("\n"):
+                    if vline.startswith("verilog work "):
+                        verilogs.append(os.path.join(prjdir, vline.split('"')[1]))
+
     patternModule = re.compile(r"module\s+(?P<name>\w+)(?P<params>\s*#\([^\)]*\))?\s*\((?P<args>[^\)]*)\)\s*;(?P<data>[\s\S]*?(?=endmodule))endmodule")
     patternParams = re.compile(r"(?P<parameter>parameter(\s+)(\w+)(\s*=\s*([0-9]+|{([^}]*)})?)?)")
     patternParam = re.compile(r"parameter(?P<type>\s+[a-zA-Z]+)?(?P<size>\s*\[.*\])?(?P<name>\s+\w+)\s*(?P<default>=.*)")
@@ -989,14 +1035,16 @@ def verilog2doc(args):
     fd = open(f"{output}/pins.html", "w")
     fd.write("<html>")
     fd.write(html_begin)
-    # fd.write(html_menu(modules, dependsGraph))
-    # fd.write(f"<div id=\"pins\" class=\"tabcontent\">")
     fd.write("\n")
-
     svg_img(gPins, "pins")
-
     fd.write("<br>\n")
     fd.write("\n")
+
+    if fpga_type:
+        fd.write("<h3>FPGA</h3>\n")
+        fd.write(f"Type: {fpga_type}<br/>\n")
+        fd.write("<br/>\n")
+
     for pin_file in glob.glob(os.path.join(os.path.dirname(module["filename"]), "pins.*")):
         pindata = open(pin_file, "r").read()
         fd.write("<h3>Pin Constraints</h3>\n")
