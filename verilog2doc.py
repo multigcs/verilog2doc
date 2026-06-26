@@ -203,7 +203,8 @@ def verilog2doc(args):
                     if vline.startswith("verilog work "):
                         verilogs.append(os.path.join(prjdir, vline.split('"')[1]))
 
-    patternModule = re.compile(r"module\s+(?P<name>\w+)(?P<params>\s*#\([^\)]*\))?\s*\((?P<args>[^\)]*)\)\s*;(?P<data>[\s\S]*?(?=endmodule))endmodule")
+    patternModule = re.compile(r"((?P<comment>\/\*(\*(?!\/)|[^*])*\*\/)[\n\s]*)*module\s+(?P<name>\w+)(?P<params>\s*#\([^\)]*\))?\s*\((?P<args>[^\)]*)\)\s*;(?P<data>[\s\S]*?(?=endmodule))endmodule")
+    patternModuleComment = re.compile(r"((?P<comment>\/\*(\*(?!\/)|[^*])*\*\/)[\n\s]*)*module\s+(?P<name>\w+)(?P<params>\s*#\([^\)]*\))?\s*\((?P<args>[^\)]*)\)\s*;(?P<data>[\s\S]*?(?=endmodule))endmodule")
     patternParams = re.compile(r"(?P<parameter>parameter(\s+)(\w+)(\s*=\s*([0-9]+|{([^}]*)})?)?)")
     patternParam = re.compile(r"parameter(?P<type>\s+[a-zA-Z]+)?(?P<size>\s*\[.*\])?(?P<name>\s+\w+)\s*(?P<default>=.*)")
     patternArg = re.compile(r"(?P<dir>output|input|inout)?(?P<type>\s+wire|\s+reg)?(?P<signed>\s*signed)?(?P<size>\s\[[^\]]*\])?(?P<name>\s\w+)")
@@ -222,6 +223,17 @@ def verilog2doc(args):
             if dirname not in dirnames:
                 dirnames.append(dirname)
 
+    moduleComments = {}
+    for verilog_file in verilogs:
+        verilog_basename = os.path.basename(verilog_file)
+        if verilog_basename == "globals.v":
+            continue
+        verilogData = open(verilog_file, "r").read()
+        for result in patternModuleComment.finditer(verilogData):
+            moduleComment = result.group("comment")
+            moduleName = result.group("name")
+            moduleComments[moduleName] = moduleComment
+
     for verilog_file in verilogs:
         verilog_basename = os.path.basename(verilog_file)
         if verilog_basename == "globals.v":
@@ -233,11 +245,13 @@ def verilog2doc(args):
         for result in patternModule.finditer(verilogData):
             moduleName = result.group("name")
             moduleData = result.group("data")
+            moduleComment = moduleComments[moduleName]
             modules[moduleName] = {
                 "filename": verilog_file,
                 "args": {},
                 "params": {},
                 "data": moduleData,
+                "comment": moduleComment,
                 "filedata": verilogData,
                 "sub": [],
             }
@@ -967,6 +981,13 @@ def verilog2doc(args):
                 gSub.edge(edge["from"], edge["to"], dir=edge["dir"], style=edge["style"])
 
             fd.write('<table border=0 width=100%><tr><td valign="top" align="left" width=30%>')
+
+
+            if module.get("comment"):
+                fd.write("<pre>")
+                fd.write(module["comment"].lstrip("/*").rstrip("*/").strip())
+                fd.write("</pre>")
+                fd.write("<br/>\n")
 
             fd.write("<h3>Module-Ports</h3>\n")
             fd.write("<table width=90%>\n")
