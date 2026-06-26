@@ -164,6 +164,7 @@ def verilog2doc(args):
     patternSub = re.compile(r"(?P<module>\w+)\s+(?P<parameter>#\((\s*)((\.\w+(\(([^\)]*)\)(\s*)(,*)(\s*)?)?)+)\))\s+(?P<instance>\w+)\s+(?P<ports>\((\s*)((\.\w+(\s*\(([^\)]*)\)(\s*)(,*)(\s*)?)?)+)\))")
     patternSub2 = re.compile(r"(?P<module>\w+)\s+(#\(([^\)]*)\)\s*)?(?P<instance>\w+)\s*\(")
     patternInstanceName = re.compile(r"(?P<instance>\s\w+)\(")
+    patternUCF = re.compile(r"NET\s+\"(?P<name>[^\"]+)\".*LOC\s*=\s*\"(?P<pin>[^\"]+)\"")
 
     modules = {}
     globals_v = ""
@@ -526,11 +527,13 @@ def verilog2doc(args):
                     elif pin_type == "ucf":
                         for line in open(pin_file, "r").read().split("\n"):
                             if line.startswith("NET "):
-                                realpin = line.split('"')[3]
-                                pin_name = line.split('"')[1]
-                                pinmapping[pin_name] = {
-                                    "pin": realpin,
-                                }
+                                netline = patternUCF.search(line)
+                                if netline:
+                                    realpin = netline["pin"]
+                                    pin_name = netline["name"]
+                                    pinmapping[pin_name] = {
+                                        "pin": realpin,
+                                    }
                     else:
                         print("unsupported pin format:", pin_file)
 
