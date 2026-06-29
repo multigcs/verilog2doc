@@ -518,6 +518,7 @@ def verilog2doc(args):
     edges_all = {}
     edges_allMin = {}
     for verilog_file in verilogs:
+        verilogData = open(verilog_file, "r").read()
         basename = verilog_file.split("/")[-1]
         fd = open(f"{output}/{basename}.html", "w")
         fd.write(html_begin)
@@ -1037,7 +1038,7 @@ def verilog2doc(args):
 
         fd.write("<b>Source:</b><br/>\n")
         fd.write("<pre><code class='language-verilog'>")
-        fd.write(module["filedata"])
+        fd.write(verilogData)
         fd.write("</code></pre>")
         fd.write("<hr/>\n")
 
