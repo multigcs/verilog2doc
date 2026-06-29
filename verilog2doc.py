@@ -245,7 +245,7 @@ def verilog2doc(args):
         for result in patternModule.finditer(verilogData):
             moduleName = result.group("name")
             moduleData = result.group("data")
-            moduleComment = moduleComments[moduleName]
+            moduleComment = moduleComments.get(moduleName, "")
             modules[moduleName] = {
                 "filename": verilog_file,
                 "args": {},
@@ -981,7 +981,6 @@ def verilog2doc(args):
                 gSub.edge(edge["from"], edge["to"], dir=edge["dir"], style=edge["style"])
 
             fd.write('<table border=0 width=100%><tr><td valign="top" align="left" width=30%>')
-
 
             if module.get("comment"):
                 fd.write("<pre>")
