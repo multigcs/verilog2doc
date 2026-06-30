@@ -150,6 +150,139 @@ def html_menu(modules, dependsGraph):
     return result
 
 
+def vparser(filepath):
+    patternComment = re.compile(r"\s*(?P<comment>\/\*(\*(?!\/)|[^*])*\*\/)")
+    patternComment2 = re.compile(r"\s*(?P<comment>\/\/.*\n)")
+    patternModule = re.compile(r"\s*module\s+(?P<name>\w+)(?P<params>\s*#\([^\)]*\))?\s*\((?P<args>[^\)]*)\)\s*(?P<inline>[\s\S]*?(?=endmodule))endmodule")
+    patternArg = re.compile(r"\s*((?P<comment>\/\/.*)*)((?P<comment2>\/\*(\*(?!\/)|[^*])*\*\/)*)\s*(?P<dir>output|input|inout)?(?P<type>\s+wire|\s+reg)?(?P<signed>\s*signed)?(?P<size>\s\[[^\]]*\])?(?P<name>\s\w+)\s*((?P<default>=\s*\w+)?)\s*((?P<comment3>\/\/.*)*)((?P<comment4>\/\*(\*(?!\/)|[^*])*\*\/)*)")
+    patternParam = re.compile(r"(?P<name>\w*)\s*=\s*((?P<default>{[^}]*})?)((?P<default2>\w)?),*")
+    patternSub = re.compile(r"\s*(?P<module>\w*) +((?P<params>#\(.*\) +)?)(?P<instance>\w*) (?P<args>\([^;]*);")
+
+    data = open(filepath, "r").read()
+
+    modules = {}
+    comments = []
+    last_block = ""
+    for char in data:
+        last_block += char
+        if matches := patternComment.match(last_block):
+            comments.append(last_block.strip().lstrip("/*").rstrip("*/").strip())
+            last_block = ""
+        elif matches := patternComment2.match(last_block):
+            comments.append(last_block.strip().lstrip("/").strip())
+            last_block = ""
+        elif last_block.endswith("endmodule") and last_block.strip().startswith("module "):
+            matches = patternModule.match(last_block)
+            module_name = matches["name"].strip()
+            args = matches["args"]
+            params = matches["params"]
+            msource = matches["inline"]
+
+            mdata = {
+                "basename": os.path.basename(filepath),
+                "filepath": filepath,
+                "module_name": module_name,
+                "comments": comments,
+                "args": [],
+                "params": [],
+                "sub": {},
+            }
+            modules[module_name] = mdata
+
+            sres = patternSub.finditer(msource)
+            if sres:
+                for sub in sres:
+                    subres = patternSub.search(sub[0].replace("\n", " ").strip())
+                    if subres:
+                        module_name = subres["module"]
+                        instance_name = subres["instance"]
+                        if module_name in {"begin", "else", "end", "if", "generate", "endcase", "restrict"}:
+                            continue
+
+                        mdata["sub"][instance_name] = {
+                            "instance_name": instance_name,
+                            "module_name": module_name,
+                            "params": [],
+                            "args": [],
+                        }
+                        sub_params = subres["params"] or ""
+                        for part in sub_params.strip().lstrip("#(").rstrip(")").split(","):
+                            part = part.strip()
+                            part = part.strip()
+                            if part and part[0] == ".":
+                                port = part.split("(")[0][1:].strip()
+                                value = part.split("(")[1].rstrip(")").strip()
+                                mdata["sub"][instance_name]["params"].append(f"{port} = {value}")
+                            else:
+                                mdata["sub"][instance_name]["params"].append(part)
+
+                        sub_args = subres["args"] or ""
+                        for part in sub_args.strip().lstrip("(").rstrip(")").split(","):
+                            part = part.strip()
+                            if part and part[0] == ".":
+                                port = part.split("(")[0][1:].strip()
+                                value = part.split("(")[1].rstrip(")").strip()
+                                mdata["sub"][instance_name]["args"].append(f"{port} = {value}")
+                            else:
+                                mdata["sub"][instance_name]["args"].append(f"{part}")
+
+            if args:
+                for part in args.strip().split(","):
+                    part = part.strip()
+                    if matches := patternArg.match(part):
+                        if mdata["args"]:
+                            if matches["comment"]:
+                                mdata["args"][-1]["comments"].append(matches["comment"])
+                            if matches["comment2"]:
+                                mdata["args"][-1]["comments"].append(matches["comment2"])
+                        mdata["args"].append(
+                            {
+                                "name": matches["name"],
+                                "dir": matches["dir"],
+                                "signed": matches["signed"],
+                                "size": matches["size"],
+                                "default": None,
+                                "comments": [],
+                            }
+                        )
+                        if matches["default"]:
+                            mdata["args"][-1]["default"] = matches["default"].split("=", 1)[1]
+                        if matches["comment3"]:
+                            mdata["args"][-1]["comments"].append(matches["comment3"])
+                        if matches["comment4"]:
+                            mdata["args"][-1]["comments"].append(matches["comment4"])
+
+            if params:
+                for part in params.strip().split("parameter"):
+                    part = part.strip().rstrip(")").strip()
+                    comment = ""
+                    if "//" in part:
+                        comment = part.split("//", 1)[1].strip()
+                    if "/*" in part:
+                        comment = part.split("/*", 1)[1].strip().rstrip("*/").strip()
+                    if matches := patternParam.match(part):
+                        mdata["params"].append(
+                            {
+                                "name": matches["name"],
+                                "default": None,
+                                "comments": [comment],
+                            }
+                        )
+                        if matches["default"]:
+                            mdata["params"][-1]["default"] = matches["default"]
+                        elif matches["default2"]:
+                            mdata["params"][-1]["default"] = matches["default2"]
+
+            last_block = ""
+            comments = []
+    if last_block.strip():
+        print("--------------")
+        print(last_block.strip())
+        print("--------------")
+
+    return modules
+
+
 def verilog2doc(args):
     verilogs = args.verilog
     top = args.top
