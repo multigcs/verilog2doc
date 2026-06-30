@@ -156,7 +156,7 @@ def vparser(filepath):
     patternModule = re.compile(r"\s*module\s+(?P<name>\w+)(?P<params>\s*#\([^\)]*\))?\s*\((?P<args>[^\)]*)\)\s*(?P<inline>[\s\S]*?(?=endmodule))endmodule")
     patternArg = re.compile(r"\s*((?P<comment>\/\/.*)*)((?P<comment2>\/\*(\*(?!\/)|[^*])*\*\/)*)\s*(?P<dir>output|input|inout)?(?P<type>\s+wire|\s+reg)?(?P<signed>\s*signed)?(?P<size>\s\[[^\]]*\])?(?P<name>\s\w+)\s*((?P<default>=\s*\w+)?)\s*((?P<comment3>\/\/.*)*)((?P<comment4>\/\*(\*(?!\/)|[^*])*\*\/)*)")
     patternParam = re.compile(r"(?P<name>\w*)\s*=\s*((?P<default>{[^}]*})?)((?P<default2>\w)?),*")
-    patternSub = re.compile(r"\s*(?P<module>\w*) +((?P<params>#\(.*\) +)?)(?P<instance>\w*) (?P<args>\([^;]*);")
+    patternSub = re.compile(r"^(?P<module>\w*) +((?P<params>#\(.*\) +)?)(?P<instance>\w*) (?P<args>\([^;]*)$")
 
     data = open(filepath, "r").read()
 
@@ -189,42 +189,46 @@ def vparser(filepath):
             }
             modules[module_name] = mdata
 
-            sres = patternSub.finditer(msource)
-            if sres:
-                for sub in sres:
-                    subres = patternSub.search(sub[0].replace("\n", " ").strip())
-                    if subres:
-                        module_name = subres["module"]
-                        instance_name = subres["instance"]
-                        if module_name in {"begin", "else", "end", "if", "generate", "endcase", "restrict"}:
-                            continue
 
-                        mdata["sub"][instance_name] = {
-                            "instance_name": instance_name,
-                            "module_name": module_name,
-                            "params": [],
-                            "args": [],
-                        }
-                        sub_params = subres["params"] or ""
-                        for part in sub_params.strip().lstrip("#(").rstrip(")").split(","):
-                            part = part.strip()
-                            part = part.strip()
-                            if part and part[0] == ".":
-                                port = part.split("(")[0][1:].strip()
-                                value = part.split("(")[1].rstrip(")").strip()
-                                mdata["sub"][instance_name]["params"].append(f"{port} = {value}")
-                            else:
-                                mdata["sub"][instance_name]["params"].append(part)
+            for sub in re.split(r'\send\s|;', msource):
+                # remove comments
+                sub = re.sub(r"\s*(?P<comment>\/\*(\*(?!\/)|[^*])*\*\/)", "", sub)
+                sub = re.sub(r"\s*(?P<comment>\/\/.*\n)", "", sub)
 
-                        sub_args = subres["args"] or ""
-                        for part in sub_args.strip().lstrip("(").rstrip(")").split(","):
-                            part = part.strip()
-                            if part and part[0] == ".":
-                                port = part.split("(")[0][1:].strip()
-                                value = part.split("(")[1].rstrip(")").strip()
-                                mdata["sub"][instance_name]["args"].append(f"{port} = {value}")
-                            else:
-                                mdata["sub"][instance_name]["args"].append(f"{part}")
+                subres = patternSub.search(sub.strip().replace("\n", " "))
+                if subres:
+                    module_name = subres["module"]
+                    instance_name = subres["instance"]
+                    if module_name in {"begin", "else", "end", "if", "generate", "endcase", "restrict"}:
+                        continue
+
+                    mdata["sub"][instance_name] = {
+                        "instance_name": instance_name,
+                        "module_name": module_name,
+                        "params": [],
+                        "args": [],
+                    }
+                    sub_params = subres["params"] or ""
+                    for part in sub_params.strip().lstrip("#(").rstrip(")").split(","):
+                        part = part.strip()
+                        part = part.strip()
+                        if part and part[0] == ".":
+                            port = part.split("(")[0][1:].strip()
+                            value = part.split("(")[1].rstrip(")").strip()
+                            mdata["sub"][instance_name]["params"].append(f"{port} = {value}")
+                        else:
+                            mdata["sub"][instance_name]["params"].append(part)
+
+                    sub_args = subres["args"] or ""
+                    for part in sub_args.strip().lstrip("(").rstrip(")").split(","):
+                        part = part.strip()
+                        if part and part[0] == ".":
+                            port = part.split("(")[0][1:].strip()
+                            value = part.split("(")[1].rstrip(")").strip()
+                            mdata["sub"][instance_name]["args"].append(f"{port} = {value}")
+                        else:
+                            mdata["sub"][instance_name]["args"].append(f"{part}")
+
 
             if args:
                 for part in args.strip().split(","):
@@ -235,16 +239,14 @@ def vparser(filepath):
                                 mdata["args"][-1]["comments"].append(matches["comment"])
                             if matches["comment2"]:
                                 mdata["args"][-1]["comments"].append(matches["comment2"])
-                        mdata["args"].append(
-                            {
-                                "name": matches["name"],
-                                "dir": matches["dir"],
-                                "signed": matches["signed"],
-                                "size": matches["size"],
-                                "default": None,
-                                "comments": [],
-                            }
-                        )
+                        mdata["args"].append({
+                            "name": matches["name"],
+                            "dir": matches["dir"],
+                            "signed": matches["signed"],
+                            "size": matches["size"],
+                            "default": None,
+                            "comments": [],
+                        })
                         if matches["default"]:
                             mdata["args"][-1]["default"] = matches["default"].split("=", 1)[1]
                         if matches["comment3"]:
@@ -261,13 +263,11 @@ def vparser(filepath):
                     if "/*" in part:
                         comment = part.split("/*", 1)[1].strip().rstrip("*/").strip()
                     if matches := patternParam.match(part):
-                        mdata["params"].append(
-                            {
-                                "name": matches["name"],
-                                "default": None,
-                                "comments": [comment],
-                            }
-                        )
+                        mdata["params"].append({
+                            "name": matches["name"],
+                            "default": None,
+                            "comments": [comment],
+                        })
                         if matches["default"]:
                             mdata["params"][-1]["default"] = matches["default"]
                         elif matches["default2"]:
