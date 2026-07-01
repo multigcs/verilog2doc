@@ -8,7 +8,7 @@ import zipfile
 
 import graphviz
 
-theme = "softgreen"
+theme = "blue"
 
 # default theme: green
 table_color = "#9bbb59"
@@ -106,10 +106,9 @@ html_begin = """
 """
 
 html_end = """
-  <!---
   </body>
-  ---!>
   <script>hljs.highlightAll();</script>
+  <!---
   <script>
     function openSection(evt, sectionName) {
       var i, tabcontent, tablinks;
@@ -126,6 +125,7 @@ html_end = """
     }
     openSection(event, 'CONFIG');
   </script>
+  ---!>
 </html>
 """
 
@@ -142,21 +142,24 @@ def dependsGraph2menuNew(modules, dependsGraph, prefix=""):
     return result
 
 
-def html_menu(modules, dependsGraph):
-    result = '<div class="tab">'
-    result += dependsGraph2menuNew(modules, dependsGraph, "")
-    result += "</div>"
+def html_row(color, port, title):
+    return f'<tr><td bgcolor="{color}" port="{port}"><font color="{td_font_color}">{title}</font></td></tr>'
 
-    return result
+
+def html_node(title, rows1, rows2=None):
+    if not rows2:
+        rows2 = []
+    return f'<<table bgcolor="{table_color}" border="0" cellborder="0" cellspacing="1" style="rounded"><tr><td><font color="{th_font_color}">{title}</font></td></tr>{"".join(rows1)}<tr><td><FONT POINT-SIZE="1"> </FONT></td></tr>{"".join(rows2)}<tr><td><FONT POINT-SIZE="4"> </FONT></td></tr></table>>'
 
 
 def vparser(filepath):
     patternComment = re.compile(r"\s*(?P<comment>\/\*(\*(?!\/)|[^*])*\*\/)")
     patternComment2 = re.compile(r"\s*(?P<comment>\/\/.*\n)")
-    patternModule = re.compile(r"\s*module\s+(?P<name>\w+)(?P<params>\s*#\([^\)]*\))?\s*\((?P<args>[^\)]*)\)\s*(?P<inline>[\s\S]*?(?=endmodule))endmodule")
-    patternArg = re.compile(r"\s*((?P<comment>\/\/.*)*)((?P<comment2>\/\*(\*(?!\/)|[^*])*\*\/)*)\s*(?P<dir>output|input|inout)?(?P<type>\s+wire|\s+reg)?(?P<signed>\s*signed)?(?P<size>\s\[[^\]]*\])?(?P<name>\s\w+)\s*((?P<default>=\s*\w+)?)\s*((?P<comment3>\/\/.*)*)((?P<comment4>\/\*(\*(?!\/)|[^*])*\*\/)*)")
+    patternModule = re.compile(r"\s*((?P<attribs>\([^\)]*\))?)\s*module\s+(?P<name>\w+)(?P<params>\s*#\([^\)]*\))?\s*\((?P<args>[^;]*)\s*(?P<inline>[\s\S]*?(?=endmodule))endmodule")
+    patternArg = re.compile(r"\s*((?P<attr>\(\*(\*(?!\))|[^*])*\*\))*)\s*((?P<comment>\/\/.*)*)((?P<comment2>\/\*(\*(?!\/)|[^*])*\*\/)*)\s*(?P<dir>output|input|inout)(?P<type>\s+wire|\s+reg)?(?P<signed>\s*signed)?(?P<size>\s\[[^\]]*\])?(?P<name>\s\w+)\s*((?P<default>=\s*\w+)?)\s*((?P<comment3>\/\/.*)*)((?P<comment4>\/\*(\*(?!\/)|[^*])*\*\/)*)")
     patternParam = re.compile(r"(?P<name>\w*)\s*=\s*((?P<default>{[^}]*})?)((?P<default2>\w)?),*")
     patternSub = re.compile(r"^(?P<module>\w*) +((?P<params>#\(.*\) +)?)(?P<instance>\w*) (?P<args>\([^;]*)$")
+    patternSubParam = re.compile(r"((?P<name>\.\w+)\s*\((?P<value>[^\)]*)\)|(?P<value2>\w+)),*\s*((?P<comment>\/\/.*)?)")
 
     data = open(filepath, "r").read()
 
@@ -171,110 +174,140 @@ def vparser(filepath):
         elif matches := patternComment2.match(last_block):
             comments.append(last_block.strip().lstrip("/").strip())
             last_block = ""
-        elif last_block.endswith("endmodule") and last_block.strip().startswith("module "):
-            matches = patternModule.match(last_block)
-            module_name = matches["name"].strip()
-            args = matches["args"]
-            params = matches["params"]
-            msource = matches["inline"]
+        elif last_block.endswith("endmodule"):
+            cleaned = re.sub(r"\(.*\)\s+module ", "module ", last_block.strip())
+            if cleaned.startswith("module "):
+                matches = patternModule.match(last_block)
+                module_name = matches["name"].strip()
+                args = matches["args"]
+                params = matches["params"]
+                msource = matches["inline"]
+                mattribs = matches["attribs"]
+                if mattribs:
+                    mattribs = mattribs.lstrip("(*").rstrip("*)").strip()
 
-            mdata = {
-                "basename": os.path.basename(filepath),
-                "filepath": filepath,
-                "module_name": module_name,
-                "comments": comments,
-                "args": [],
-                "params": [],
-                "sub": {},
-            }
-            modules[module_name] = mdata
+                mdata = {
+                    "basename": os.path.basename(filepath),
+                    "filepath": filepath,
+                    "data": data,
+                    "module_name": module_name,
+                    "comments": comments,
+                    "attribs": mattribs,
+                    "args": [],
+                    "params": [],
+                    "sub": {},
+                }
+                modules[module_name] = mdata
 
-
-            for sub in re.split(r'\send\s|;', msource):
-                # remove comments
-                sub = re.sub(r"\s*(?P<comment>\/\*(\*(?!\/)|[^*])*\*\/)", "", sub)
-                sub = re.sub(r"\s*(?P<comment>\/\/.*\n)", "", sub)
-
-                subres = patternSub.search(sub.strip().replace("\n", " "))
-                if subres:
-                    module_name = subres["module"]
-                    instance_name = subres["instance"]
-                    if module_name in {"begin", "else", "end", "if", "generate", "endcase", "restrict"}:
-                        continue
-
-                    mdata["sub"][instance_name] = {
-                        "instance_name": instance_name,
-                        "module_name": module_name,
-                        "params": [],
-                        "args": [],
-                    }
-                    sub_params = subres["params"] or ""
-                    for part in sub_params.strip().lstrip("#(").rstrip(")").split(","):
-                        part = part.strip()
-                        part = part.strip()
-                        if part and part[0] == ".":
-                            port = part.split("(")[0][1:].strip()
-                            value = part.split("(")[1].rstrip(")").strip()
-                            mdata["sub"][instance_name]["params"].append(f"{port} = {value}")
-                        else:
-                            mdata["sub"][instance_name]["params"].append(part)
-
-                    sub_args = subres["args"] or ""
-                    for part in sub_args.strip().lstrip("(").rstrip(")").split(","):
-                        part = part.strip()
-                        if part and part[0] == ".":
-                            port = part.split("(")[0][1:].strip()
-                            value = part.split("(")[1].rstrip(")").strip()
-                            mdata["sub"][instance_name]["args"].append(f"{port} = {value}")
-                        else:
-                            mdata["sub"][instance_name]["args"].append(f"{part}")
-
-
-            if args:
-                for part in args.strip().split(","):
-                    part = part.strip()
-                    if matches := patternArg.match(part):
+                if args:
+                    for anum, arg in enumerate(patternArg.finditer(args.strip())):
                         if mdata["args"]:
-                            if matches["comment"]:
-                                mdata["args"][-1]["comments"].append(matches["comment"])
-                            if matches["comment2"]:
-                                mdata["args"][-1]["comments"].append(matches["comment2"])
-                        mdata["args"].append({
-                            "name": matches["name"],
-                            "dir": matches["dir"],
-                            "signed": matches["signed"],
-                            "size": matches["size"],
-                            "default": None,
-                            "comments": [],
-                        })
-                        if matches["default"]:
-                            mdata["args"][-1]["default"] = matches["default"].split("=", 1)[1]
-                        if matches["comment3"]:
-                            mdata["args"][-1]["comments"].append(matches["comment3"])
-                        if matches["comment4"]:
-                            mdata["args"][-1]["comments"].append(matches["comment4"])
+                            if arg["comment"]:
+                                mdata["args"][-1]["comments"].append(arg["comment"])
+                            if arg["comment2"]:
+                                mdata["args"][-1]["comments"].append(arg["comment2"])
+                        mdata["args"].append(
+                            {
+                                "num": anum,
+                                "name": arg["name"].strip(),
+                                "dir": arg["dir"],
+                                "signed": arg["signed"],
+                                "size": arg["size"],
+                                "type": arg["type"] or "wire",
+                                "default": None,
+                                "comments": [],
+                            }
+                        )
+                        if arg["default"]:
+                            mdata["args"][-1]["default"] = arg["default"].split("=", 1)[1]
+                        if arg["comment3"]:
+                            mdata["args"][-1]["comments"].append(arg["comment3"])
+                        if arg["comment4"]:
+                            mdata["args"][-1]["comments"].append(arg["comment4"])
 
-            if params:
-                for part in params.strip().split("parameter"):
-                    part = part.strip().rstrip(")").strip()
-                    comment = ""
-                    if "//" in part:
-                        comment = part.split("//", 1)[1].strip()
-                    if "/*" in part:
-                        comment = part.split("/*", 1)[1].strip().rstrip("*/").strip()
-                    if matches := patternParam.match(part):
-                        mdata["params"].append({
-                            "name": matches["name"],
-                            "default": None,
-                            "comments": [comment],
-                        })
-                        if matches["default"]:
-                            mdata["params"][-1]["default"] = matches["default"]
-                        elif matches["default2"]:
-                            mdata["params"][-1]["default"] = matches["default2"]
+                pnum = 0
+                if params:
+                    for rpart in params.strip().split("parameter"):
+                        part = rpart.strip().rstrip(")").strip()
+                        comment = ""
+                        if "//" in part:
+                            comment = part.split("//", 1)[1].strip()
+                        if "/*" in part:
+                            comment = part.split("/*", 1)[1].strip().rstrip("*/").strip()
+                        if matches := patternParam.match(part):
+                            mdata["params"].append(
+                                {
+                                    "num": pnum,
+                                    "name": matches["name"].strip(),
+                                    "default": None,
+                                    "comments": [comment],
+                                }
+                            )
+                            if matches["default"]:
+                                mdata["params"][-1]["default"] = matches["default"]
+                            elif matches["default2"]:
+                                mdata["params"][-1]["default"] = matches["default2"]
+                            pnum += 1
 
-            last_block = ""
-            comments = []
+                # for sub in re.split(r'\n', msource):
+                for rsub in re.split(r"\send\s|;|\n", msource):
+                    sub = rsub.strip()
+                    if sub.startswith("parameter "):
+                        match = patternParam.match(sub[10:])
+                        if match:
+                            mdata["params"].append(
+                                {
+                                    "num": pnum,
+                                    "name": match["name"].strip(),
+                                    "default": None,
+                                    "comments": [],
+                                }
+                            )
+                            if match["default"]:
+                                mdata["params"][-1]["default"] = match["default"]
+                            elif match["default2"]:
+                                mdata["params"][-1]["default"] = match["default2"]
+                            pnum += 1
+
+                for rsub in re.split(r"\send\s|;", msource):
+                    # remove comments
+                    sub = re.sub(r"\s*(?P<comment>\/\*(\*(?!\/)|[^*])*\*\/)", "", rsub.strip())
+                    sub = re.sub(r"\s*(?P<comment>\/\/.*\n)", "", sub)
+
+                    subres = patternSub.search(sub.strip().replace("\n", " "))
+                    if subres:
+                        module_name = subres["module"]
+                        instance_name = subres["instance"]
+                        if module_name in {"begin", "else", "end", "if", "generate", "endcase", "restrict"}:
+                            continue
+
+                        mdata["sub"][instance_name] = {
+                            "instance_name": instance_name,
+                            "module_name": module_name,
+                            "params": [],
+                            "args": [],
+                        }
+                        sub_params = subres["params"] or ""
+
+                        for pnum, part in enumerate(patternSubParam.finditer(sub_params)):
+                            if part["value"]:
+                                pname = part["name"].strip().lstrip(".")
+                                mdata["sub"][instance_name]["params"].append({"num": pnum, "name": pname, "value": part["value"]})
+                            elif part["value2"]:
+                                mdata["sub"][instance_name]["params"].append({"num": pnum, "value": part["value2"]})
+
+                        sub_args = subres["args"] or ""
+                        for anum, rpart in enumerate(sub_args.strip().lstrip("(").rstrip(")").split(",")):
+                            part = rpart.strip()
+                            if part and part[0] == ".":
+                                pname = part.split("(")[0][1:].strip().lstrip(".")
+                                value = part.split("(")[1].rstrip(")").strip()
+                                mdata["sub"][instance_name]["args"].append({"num": anum, "name": pname, "value": value})
+                            else:
+                                mdata["sub"][instance_name]["args"].append({"num": anum, "value": part})
+
+                last_block = ""
+                comments = []
     if last_block.strip():
         print("--------------")
         print(last_block.strip())
@@ -336,187 +369,139 @@ def verilog2doc(args):
                     if vline.startswith("verilog work "):
                         verilogs.append(os.path.join(prjdir, vline.split('"')[1]))
 
-    patternModule = re.compile(r"((?P<comment>\/\*(\*(?!\/)|[^*])*\*\/)[\n\s]*)*module\s+(?P<name>\w+)(?P<params>\s*#\([^\)]*\))?\s*\((?P<args>[^\)]*)\)\s*;(?P<data>[\s\S]*?(?=endmodule))endmodule")
-    patternModuleComment = re.compile(r"((?P<comment>\/\*(\*(?!\/)|[^*])*\*\/)[\n\s]*)*module\s+(?P<name>\w+)(?P<params>\s*#\([^\)]*\))?\s*\((?P<args>[^\)]*)\)\s*;(?P<data>[\s\S]*?(?=endmodule))endmodule")
-    patternParams = re.compile(r"(?P<parameter>parameter(\s+)(\w+)(\s*=\s*([0-9]+|{([^}]*)})?)?)")
-    patternParam = re.compile(r"parameter(?P<type>\s+[a-zA-Z]+)?(?P<size>\s*\[.*\])?(?P<name>\s+\w+)\s*(?P<default>=.*)")
-    patternArg = re.compile(r"(?P<dir>output|input|inout)?(?P<type>\s+wire|\s+reg)?(?P<signed>\s*signed)?(?P<size>\s\[[^\]]*\])?(?P<name>\s\w+)")
-    patternSub = re.compile(r"(?P<module>\w+)\s+(?P<parameter>#\((\s*)((\.\w+(\(([^\)]*)\)(\s*)(,*)(\s*)?)?)+)\))\s+(?P<instance>\w+)\s+(?P<ports>\((\s*)((\.\w+(\s*\(([^\)]*)\)(\s*)(,*)(\s*)?)?)+)\))")
-    patternSub2 = re.compile(r"(?P<module>\w+)\s+(#\(([^\)]*)\)\s*)?(?P<instance>\w+)\s*\(")
-    patternInstanceName = re.compile(r"(?P<instance>\s\w+)\(")
-    patternUCF = re.compile(r"NET\s+\"(?P<name>[^\"]+)\".*LOC\s*=\s*\"(?P<pin>[^\"]+)\"")
-
-    modules = {}
+    vmodules = {}
     globals_v = ""
-    dirnames = []
     for verilog_file in verilogs:
         if os.path.basename(verilog_file) == "globals.v":
             globals_v = verilog_file
-            dirname = os.path.dirname(verilog_file)
-            if dirname not in dirnames:
-                dirnames.append(dirname)
-
-    moduleComments = {}
-    for verilog_file in verilogs:
-        verilog_basename = os.path.basename(verilog_file)
-        if verilog_basename == "globals.v":
-            continue
-        verilogData = open(verilog_file, "r").read()
-        for result in patternModuleComment.finditer(verilogData):
-            moduleComment = result.group("comment")
-            moduleName = result.group("name")
-            moduleComments[moduleName] = moduleComment
 
     for verilog_file in verilogs:
-        verilog_basename = os.path.basename(verilog_file)
-        if verilog_basename == "globals.v":
+        if verilog_file == globals_v:
             continue
-        verilogData = open(verilog_file, "r").read()
-        verilogDataOrg = verilogData
-        verilogData = re.sub(r"//.*", "", verilogData)
-        verilogData = re.sub(r"/\*.*\*/", "", verilogData)
-        for result in patternModule.finditer(verilogData):
-            moduleName = result.group("name")
-            moduleData = result.group("data")
-            moduleComment = moduleComments.get(moduleName, "")
-            modules[moduleName] = {
-                "filename": verilog_file,
-                "args": {},
-                "params": {},
-                "data": moduleData,
-                "comment": moduleComment,
-                "filedata": verilogData,
-                "sub": [],
-            }
+        vmodules.update(vparser(verilog_file))
 
-            defines = []
-            moduleArgLast = {}
-
-            args = []
-            for arg in result.group("args").split("\n"):
-                if arg.startswith("`"):
-                    args.append(f"{arg},")
-                else:
-                    args.append(arg)
-
-            for larg in " ".join(args).split(","):
-                moduleArg = {}
-                if not larg:
-                    continue
-
-                arg = re.sub(r"\s+", " ", larg.strip())
-
-                # try to find comment
-                if larg.strip():
-                    for line in verilogDataOrg.split("\n"):
-                        if "//" in line and larg.strip() in line:
-                            moduleArg["comment"] = line.split("//")[-1].strip()
-
-                if arg.startswith("`"):
-                    if arg.startswith(("`ifndef", "`ifdef")):
-                        defines.append(arg)
-                    elif arg.startswith("`endif"):
-                        defines.pop()
-                else:
-                    moduleArg["defines"] = defines.copy()
-                    argm = patternArg.search(arg)
-                    if argm:
-                        if argm["dir"]:
-                            moduleArg["direction"] = argm["dir"].strip()
-                        if argm["type"]:
-                            moduleArg["type"] = argm["type"].strip()
-                        if argm["signed"]:
-                            moduleArg["signed"] = argm["signed"].strip()
-                        if argm["size"]:
-                            moduleArg["size"] = argm["size"].strip()
-                        if argm["name"]:
-                            moduleArg["name"] = argm["name"].strip()
-                        modules[moduleName]["args"][moduleArg["name"]] = moduleArg
-                        moduleArgLast = moduleArg
-                    elif len(arg.strip().split()) == 1:
-                        moduleArg = moduleArgLast.copy()
-                        moduleArg["name"] = arg.strip()
-                        modules[moduleName]["args"][moduleArg["name"]] = moduleArg
-                    else:
-                        print(f"UNKNOWN ARG ({moduleName}): {arg.strip()} <br/>")
-
-            if result.group("params"):
-                pstring = result.group("params").replace("\n", " ").strip().lstrip("#(").rstrip(")").strip()
-                params = patternParams.findall(pstring)
-                if params:
-                    for param in params:
-                        mparam = patternParam.search(param[0])
-                        if mparam:
-                            moduleParam = {}
-                            moduleParam["name"] = mparam["name"].strip()
-                            if mparam["type"]:
-                                moduleParam["size"] = mparam["type"].strip().replace(" ", "")
-                            if mparam["size"]:
-                                moduleParam["size"] = mparam["size"].strip().replace(" ", "")
-                            if mparam["default"]:
-                                moduleParam["default"] = mparam["default"].strip().lstrip("=").strip().replace(" ", "").replace("_", "")
-
-                            modules[moduleName]["params"][moduleParam["name"]] = moduleParam
-                        else:
-                            print(f"UNKNOWN PARAMETER ({moduleName}): {arg.strip()} <br/>")
-
-            for pattern in (patternSub, patternSub2):
-                sres = pattern.finditer(result.group("data"))
-                if sres:
-                    for sub in sres:
-                        subres = pattern.search(sub[0].replace("\n", " ").strip())
-                        if subres:
-                            module_name = subres["module"]
-                            instance_name = subres["instance"]
-                            if module_name in {"begin", "else", "end", "if", "generate", "endcase", "restrict"}:
-                                continue
-                            modules[moduleName]["sub"].append([module_name, sub[0]])
-
-    if top not in modules:
-        if "rio" in modules:
+    if top not in vmodules:
+        if "rio" in vmodules:
             top = "rio"
             print(f"FALLBACK: setting top module to '{top}'")
-        elif "top" in modules:
+        elif "top" in vmodules:
             top = "top"
             print(f"FALLBACK: setting top module to '{top}'")
         else:
             print(f"ERROR: top '{top}' module not found")
-            print(f"Modules: {', '.join(modules.keys())}")
+            print(f"Modules: {', '.join(vmodules.keys())}")
             exit(1)
 
     if output is None:
-        if "/" in modules[top]["filename"]:
-            output = "/".join(modules[top]["filename"].split("/")[0:-1]) + "/Documentation"
+        if "/" in vmodules[top]["filepath"]:
+            output = "/".join(vmodules[top]["filepath"].split("/")[0:-1]) + "/Documentation"
         else:
             output = "./Documentation"
-
         print(f"setting output directory to {output}")
         os.makedirs(output, exist_ok=True)
 
-    def mexpand(dependsGraph, module):
-        dependsGraph[module] = {}
-        for sub in modules[module]["sub"]:
-            if sub[0] in modules:
-                mexpand(dependsGraph[module], sub[0])
-        return dependsGraph
+    # read pins
+    pinmapping = {}
+    for suffix in ("cst", "pcf", "lpf", "ucf"):
+        if not pin_file:
+            for filepath in glob.glob(os.path.join(os.path.dirname(vmodules[top]["filepath"]), f"*.{suffix}")):
+                pin_file = filepath
+                break
 
-    def dependsGraph2menu(fd, dependsGraph, prefix=""):
-        for module in dependsGraph:
-            filename = modules[module]["filename"]
-            fd.write(f"{prefix}<a target='main' href='{filename.split('/')[-1]}.html#{module}'>{module}</a><br/>\n")
-            dependsGraph2menu(fd, dependsGraph[module], prefix + "|&nbsp;")
+    if pin_file:
+        print(f"using pin-file: {pin_file}")
+        pin_type = pin_file.split(".")[-1]
+        if pin_type == "cst":
+            for line in open(pin_file, "r").read().split("\n"):
+                if line.startswith("IO_LOC "):
+                    realpin = line.strip(";").split()[-1]
+                    pin_name = line.strip(";").split()[1].strip('"')
+                    pinmapping[pin_name] = {
+                        "pin": realpin,
+                    }
+        elif pin_type == "pcf":
+            for line in open(pin_file, "r").read().split("\n"):
+                if line.startswith("set_io "):
+                    realpin = line.split()[-1]
+                    pin_name = line.split()[-2]
+                    pinmapping[pin_name] = {
+                        "pin": realpin,
+                    }
+        elif pin_type == "lpf":
+            for line in open(pin_file, "r").read().split("\n"):
+                if line.startswith("LOCATE COMP "):
+                    realpin = line.split()[-1].strip('";')
+                    pin_name = line.split()[-3].strip('";')
+                    pinmapping[pin_name] = {
+                        "pin": realpin,
+                    }
+        elif pin_type == "ucf":
+            patternUCF = re.compile(r"NET\s+\"(?P<name>[^\"]+)\".*LOC\s*=\s*\"(?P<pin>[^\"]+)\"")
+            for line in open(pin_file, "r").read().split("\n"):
+                if line.startswith("NET "):
+                    netline = patternUCF.search(line)
+                    if netline:
+                        realpin = netline["pin"]
+                        pin_name = netline["name"]
+                        pinmapping[pin_name] = {
+                            "pin": realpin,
+                        }
+        else:
+            print("unsupported pin format:", pin_file)
 
-    dependsGraph = mexpand({}, top)
-    fd = open(f"{output}/menu.html", "w")
+    list_pins = []
+    for pinname, pindata in pinmapping.items():
+        color = row_colors[len(list_pins) % 2]
+        list_pins.append(f'<tr><td bgcolor="{color}"><font color="{td_font_color}">{pinname}</font></td><td bgcolor="{color}" port="{pinname}"><font color="{td_font_color}">{pindata["pin"]}</font></td></tr>')
+
+    gPins = graphviz.Digraph("G", format="svg")
+    gPins.attr(rankdir="LR")
+    gPins.node(
+        "Pins",
+        shape="none",
+        label=f'<<table bgcolor="{table_color}" border="0" cellborder="0" cellspacing="1" style="rounded"><tr><td><font color="{th_font_color}">PINS</font></td></tr>{"".join(list_pins)}<tr><td><FONT POINT-SIZE="4"> </FONT></td></tr></table>>',
+        fontsize="11pt",
+        tooltip="Pins",
+        href="Pins.html",
+    )
+
+    def menu(mtree, mlist, module):
+        mlist.append(module)
+        if module not in mtree:
+            mtree[module] = {}
+        for instance_name, instance_data in vmodules.get(module, {}).get("sub", {}).items():
+            menu(mtree[module], mlist, instance_data["module_name"])
+
+    def menudraw(fd, mtree, prefix=""):
+        for module in mtree:
+            fd.write(f"{prefix}<a target='main' href=\"module_{module}.html\">{module}</a><br/>\n")
+            menudraw(fd, mtree[module], f"{prefix}&nbsp;&nbsp;&nbsp;")
+
+    # build menu-tree
+    mtree = {}
+    mlist = []
+    menu(mtree, mlist, top)
+    # print(json.dumps(mtree, indent=2))
+
+    fd = open(f"{output}/Menu.html", "w")
     fd.write("<html>")
-    fd.write("<a target='main' href='main.html'>Overview</a><br/>\n")
-    fd.write("<a target='main' href='pins.html'>Pins</a><br/>\n")
+    fd.write("<a target='main' href='Main.html'>Overview</a><br/>\n")
+    fd.write("<a target='main' href='Pins.html'>Pins</a><br/>\n")
     fd.write("<br/>\n")
     fd.write("Modules:<br/>\n")
-    dependsGraph2menu(fd, dependsGraph, "|&nbsp;")
+
+    menudraw(fd, mtree)
+    fd.write("<br/>")
+
+    # find missing modules
+    for module in vmodules:
+        if module not in mlist:
+            fd.write(f"<a target='main' href=\"module_{module}.html\">{module}</a><br/>\n")
+
     fd.write("<br/>")
     if linter:
         fd.write("<a target='main' href='linter.html'>Linter-Output</a><br/>\n")
+    fd.write("<br/>")
     fd.write("</html>")
     fd.close()
 
@@ -537,7 +522,7 @@ def verilog2doc(args):
                 os.system(f"dot -Tsvg -o {output}/{verilog_basename}.svg {output}/{verilog_basename}.dot")
             dotsvgs[verilog_file] = f"{output}/{verilog_basename}.svg"
 
-    zip_obj = zipfile.ZipFile("/tmp/documentation/highlight.zip", "r")
+    zip_obj = zipfile.ZipFile("highlight.zip", "r")
     zip_obj.extractall(output)
     zip_obj.close()
 
@@ -556,63 +541,10 @@ def verilog2doc(args):
             fd.write(f'<img width="100%" src="{name}.svg" />')
             fd.write("</a>")
 
-    def add_edge(edges, port_from, port_to, direction="forward", style=None):
-        edges[f"{port_from}--{port_to}"] = {
-            "from": port_from,
-            "to": port_to,
-            "dir": direction,
-            "style": style,
-        }
-        edges_all[f"{port_from}--{port_to}"] = {
-            "from": port_from,
-            "to": port_to,
-            "dir": direction,
-            "style": style,
-        }
-
-    def add_edgeMin(edges, port_from, port_to, direction="forward", style=None):
-        edges_allMin[f"{port_from}--{port_to}"] = {
-            "from": port_from,
-            "to": port_to,
-            "dir": direction,
-            "style": style,
-        }
-
-    def instance_get(sub):
-        instance_name = f"{sub[0]}?"
-        portmapping = {}
-        paramapping = {}
-        subres = patternSub.search(sub[1].replace("\n", " ").strip())
-        if subres:
-            instance_name = subres["instance"]
-            for port in subres["parameter"].strip().lstrip("(").rstrip(")").split(","):
-                splitted = port.strip().lstrip(".").rstrip(")").split("(")
-                if len(splitted) == 2 and splitted[0] != splitted[1]:
-                    paramapping[splitted[0]] = splitted[1]
-
-            for port in subres["ports"].strip().lstrip("(").rstrip(")").split(","):
-                splitted = port.strip().lstrip(".").rstrip(")").split("(")
-                portmapping[splitted[0]] = splitted[1]
-        else:
-            instres = patternInstanceName.search(sub[1].replace("\n", " ").strip())
-            if instres:
-                instance_name = instres["instance"]
-        return instance_name, portmapping, paramapping
-
-    gPins = graphviz.Digraph("G", format="svg")
-    gPins.attr(rankdir="LR")
-
-    gAll = graphviz.Digraph("G", format="svg")
-    gAll.attr(rankdir="LR")
-
-    gAllMin = graphviz.Digraph("G", format="svg")
-    gAllMin.attr(rankdir="LR")
-
     fileerrors = {}
     if linter:
         verilator = ["verilator", "--lint-only", "-Wno-WIDTHEXPAND", *verilogs]
         result = subprocess.run(verilator, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-
         if result.stderr:
             outputs = []
             for line in result.stderr.decode().split("\n"):
@@ -638,7 +570,8 @@ def verilog2doc(args):
         fd.write("<h3>Linter-Output</h3>\n")
         for filename, errors in fileerrors.items():
             if filename:
-                fd.write(f'filename: <a href="{os.path.basename(filename)}.html">{filename}</a><br/>')
+                # fd.write(f'filename: <a href="module_{os.path.basename(filename)}.html">{filename}</a><br/>')
+                fd.write(f"filename: {filename}<br/>")
             fd.write("<pre><code>")
             for error in errors:
                 fd.write(error.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
@@ -647,550 +580,235 @@ def verilog2doc(args):
         fd.write(html_end)
         fd.close()
 
-    cluster_n = 0
-    edges_all = {}
-    edges_allMin = {}
-    for verilog_file in verilogs:
-        verilogData = open(verilog_file, "r").read()
-        basename = verilog_file.split("/")[-1]
-        fd = open(f"{output}/{basename}.html", "w")
-        fd.write(html_begin)
-        # fd.write(html_menu(modules, dependsGraph))
-        # fd.write(f"<div id=\"{basename}\" class=\"tabcontent\">")
-        fd.write(f"<h1>{verilog_file.split('/')[-1]}</h1>\n")
+    def link_modules(graph, module, name_from, name_to):
+        for param in module["params"]:
+            pname = param.get("name") or param.get("value")
+            graph.edge(
+                f"{name_from}:{pname}",
+                f"{name_to}:{pname}",
+                dir="none",
+                fontsize="11pt",
+            )
+        for arg in module["args"]:
+            graph.edge(
+                f"{name_from}:{arg.get('name')}",
+                f"{name_to}:{arg.get('name')}",
+                dir="none",
+                fontsize="11pt",
+            )
 
-        for moduleName, module in modules.items():
-            if module["filename"] != verilog_file:
-                continue
-
-            fd.write(f"<h2 id='{moduleName}'>{moduleName}</h2>\n")
-            fd.write("<hr/>\n")
-            params = []
-            for argName, arg in module["params"].items():
-                default = arg.get("default", "?")
-                color = row_colors[len(params) % 2]
-                params.append(f'<tr><td bgcolor="{color}" port="{argName}"><font color="{td_font_color}"><I>{argName}={default}</I></font></td></tr>')
-
-            ports = []
-            for argName, arg in module["args"].items():
-                if not arg.get("defines"):
-                    color = row_colors[len(ports) % 2]
-                    ports.append(f'<tr><td bgcolor="{color}" port="{argName}"><font color="{td_font_color}">{argName}{arg.get("size") or ""}</font></td></tr>')
-
-            gSub = graphviz.Digraph("G", format="svg")
-            gSub.attr(rankdir="LR")
-            sub_edges = {}
-
-            if top == moduleName:
-                # read and link pins
-                pinmapping = {}
-                for suffix in ("cst", "pcf", "lpf", "ucf"):
-                    if not pin_file:
-                        for filepath in glob.glob(os.path.join(os.path.dirname(module["filename"]), f"*.{suffix}")):
-                            pin_file = filepath
-                            break
-
-                if pin_file:
-                    print(f"using pin-file: {pin_file}")
-                    pin_filename = os.path.basename(pin_file)
-                    pin_type = pin_file.split(".")[-1]
-                    if pin_type == "cst":
-                        for line in open(pin_file, "r").read().split("\n"):
-                            if line.startswith("IO_LOC "):
-                                realpin = line.strip(";").split()[-1]
-                                pin_name = line.strip(";").split()[1].strip('"')
-                                pinmapping[pin_name] = {
-                                    "pin": realpin,
-                                }
-                    elif pin_type == "pcf":
-                        for line in open(pin_file, "r").read().split("\n"):
-                            if line.startswith("set_io "):
-                                realpin = line.split()[-1]
-                                pin_name = line.split()[-2]
-                                pinmapping[pin_name] = {
-                                    "pin": realpin,
-                                }
-                    elif pin_type == "lpf":
-                        for line in open(pin_file, "r").read().split("\n"):
-                            if line.startswith("LOCATE COMP "):
-                                realpin = line.split()[-1].strip('";')
-                                pin_name = line.split()[-3].strip('";')
-                                pinmapping[pin_name] = {
-                                    "pin": realpin,
-                                }
-                    elif pin_type == "ucf":
-                        for line in open(pin_file, "r").read().split("\n"):
-                            if line.startswith("NET "):
-                                netline = patternUCF.search(line)
-                                if netline:
-                                    realpin = netline["pin"]
-                                    pin_name = netline["name"]
-                                    pinmapping[pin_name] = {
-                                        "pin": realpin,
-                                    }
-                    else:
-                        print("unsupported pin format:", pin_file)
-
-                if pinmapping:
-                    pins = []
-                    for argName, arg in module["args"].items():
-                        if not arg.get("defines"):
-                            pin = pinmapping.get(argName, {}).get("pin", "?")
-                            direction = arg.get("direction")
-                            color = row_colors[len(pins) % 2]
-                            pins.append(f'<tr><td bgcolor="{color}"><font color="{td_font_color}">{direction}</font></td><td bgcolor="{color}" port="{argName}"><font color="{td_font_color}">{pin}</font></td></tr>')
-                            arrow = ""
-                            if direction == "input":
-                                arrow = ""
-                            elif direction == "inout":
-                                arrow = "both"
-                            else:
-                                arrow = "back"
-                            gSub.edge(f"PINS:{argName}", f"{moduleName}:{argName}", dir=arrow)
-                            gAll.edge(f"PINS:{argName}", f"{moduleName}:{argName}", dir=arrow)
-                            gPins.edge(f"PINS:{argName}", f"{moduleName}:{argName}", dir=arrow)
-
-                    gAllMin.edge(
-                        "PINS",
-                        moduleName,
-                        dir="none",
-                    )
-
-                    label = f'<<table bgcolor="{table_color}" border="0" cellborder="0" cellspacing="1" style="rounded"><tr><td colspan="2"><font color="{th_font_color}">{pin_filename}</font></td></tr>{"".join(pins)}<tr><td><FONT POINT-SIZE="4"> </FONT></td></tr></table>>'
-                    gSub.node(
-                        "PINS",
-                        shape="none",
-                        label=label,
-                        fontsize="11pt",
-                        tooltip=f"FPGA-Pins: {pin_filename}",
-                        href="pins.html",
-                    )
-                    gAll.node(
-                        "PINS",
-                        shape="none",
-                        label=label,
-                        fontsize="11pt",
-                        tooltip=f"FPGA-Pins: {pin_filename}",
-                        href="pins.html",
-                    )
-                    gPins.node(
-                        "PINS",
-                        shape="none",
-                        label=label,
-                        fontsize="11pt",
-                        tooltip=f"FPGA-Pins: {pin_filename}",
-                        href="pins.html",
-                    )
-
-                    labelMin = f'<<table bgcolor="{table_color}" border="0" cellborder="0" cellspacing="1" style="rounded"><tr><td colspan="2"><font color="{th_font_color}">{pin_filename}</font></td></tr></table>>'
-                    gAllMin.node(
-                        "PINS",
-                        shape="none",
-                        label=labelMin,
-                        fontsize="11pt",
-                        tooltip=f"FPGA-Pins: {pin_filename}",
-                        href="pins.html",
-                    )
-
-            with gSub.subgraph(name="cluster_0") as c:
-                c.attr(style="filled,rounded", color="#EFEFEF")
-                c.attr(label=f"{os.path.basename(verilog_file)} / {moduleName}")
-                c.attr(margin="10")
-
-                label = f'<<table bgcolor="{table_color}" border="0" cellborder="0" cellspacing="1" style="rounded"><tr><td><font color="{th_font_color}">{moduleName}</font></td></tr>{"".join(params)}<tr><td><FONT POINT-SIZE="1"> </FONT></td></tr>{"".join(ports)}<tr><td><FONT POINT-SIZE="4"> </FONT></td></tr></table>>'
-                c.node(
-                    moduleName,
-                    shape="none",
-                    label=label,
-                    fontsize="11pt",
-                    href=f"{verilog_file.split('/')[-1]}.html#{moduleName}",
-                    tooltip=f"Module-Header: {moduleName}\\nFilename: {os.path.basename(verilog_file)}",
-                    group="g1",
-                )
-                if top == moduleName:
-                    gPins.node(
-                        moduleName,
-                        shape="none",
-                        label=label,
-                        fontsize="11pt",
-                        href=f"{verilog_file.split('/')[-1]}.html#{moduleName}",
-                        tooltip=f"Module-Header: {moduleName}\\nFilename: {os.path.basename(verilog_file)}",
-                    )
-                sub_first = None
-                for sub in module["sub"]:
-                    if sub[0] in modules:
-                        instance_name, portmapping, paramapping = instance_get(sub)
-                        sargs = []
-                        for argName, arg in modules[sub[0]]["params"].items():
-                            default = arg.get("default", "?")
-                            pvalue = paramapping.get(argName, default)
-                            color = row_colors[len(sargs) % 2]
-                            sargs.append(f'<tr><td bgcolor="{color}" port="{argName}"><font color="{td_font_color}"><I>{argName}={pvalue}</I></font></td></tr>')
-                        sports = []
-                        for argName, arg in modules[sub[0]]["args"].items():
-                            if not arg.get("defines"):
-                                ptitle = portmapping.get(argName, argName).replace("&", "AND")
-                                color = row_colors[len(sports) % 2]
-                                sports.append(f'<tr><td bgcolor="{color}" port="{argName}"><font color="{td_font_color}">{ptitle}</font></td></tr>')
-
-                        label = f'<<table bgcolor="{table_color}" border="0" cellborder="0" cellspacing="1" style="rounded"><tr><td><font color="{th_font_color}">{instance_name}</font></td></tr>{"".join(sargs)}<tr><td><FONT POINT-SIZE="1"> </FONT></td></tr>{"".join(sports)}<tr><td><FONT POINT-SIZE="4"> </FONT></td></tr></table>>'
-
-                        group = ""
-                        if not sub_first:
-                            sub_first = instance_name
-                            group = "g1"
-
-                        c.node(
-                            f"{moduleName}_{instance_name}",
-                            shape="none",
-                            label=label,
-                            fontsize="11pt",
-                            href=f"{verilog_file.split('/')[-1]}.html#{moduleName}",
-                            tooltip=f"Instance: {instance_name} -> {sub[0]}",
-                            group=group,
-                        )
-                        c.edge(
-                            moduleName,
-                            f"{moduleName}_{instance_name}",
-                            dir="none",
-                            style="invis",
-                            fontsize="11pt",
-                        )
-                    else:
-                        # unknown modules
-                        instance_name, portmapping, paramapping = instance_get(sub)
-                        sargs = []
-                        for argName, arg in paramapping.items():
-                            ptitle = f"{argName.replace('&', 'AND')}={arg.replace('&', 'AND')}"
-                            color = row_colors[len(sargs) % 2]
-                            sargs.append(f'<tr><td bgcolor="{color}" port="{argName}"><font color="{td_font_color}">{ptitle}</font></td></tr>')
-                        sports = []
-                        for argName, arg in portmapping.items():
-                            ptitle = f"{argName.replace('&', 'AND')}={arg.replace('&', 'AND')}"
-                            color = row_colors[len(sports) % 2]
-                            sports.append(f'<tr><td bgcolor="{color}" port="{argName}"><font color="{td_font_color}">{ptitle}</font></td></tr>')
-                        instance_name = sub[0]
-                        label = f'<<table bgcolor="{table_color}" border="0" cellborder="0" cellspacing="1" style="rounded"><tr><td><font color="{th_font_color}">{instance_name}</font></td></tr>{"".join(sargs)}<tr><td><FONT POINT-SIZE="1"> </FONT></td></tr>{"".join(sports)}<tr><td><FONT POINT-SIZE="4"> </FONT></td></tr></table>>'
-                        c.node(
-                            f"{moduleName}_{instance_name}",
-                            shape="none",
-                            label=label,
-                            fontsize="11pt",
-                            href=f"{verilog_file.split('/')[-1]}.html#{moduleName}",
-                            tooltip=f"Instance: {instance_name} -> {sub[0]}",
-                            # group=group,
-                        )
-
-            cluster_n += 1
-            with gAll.subgraph(name=f"cluster_{cluster_n}") as c:
-                c.attr(style="filled,rounded", color="#EFEFEF")
-                c.attr(label=f"{os.path.basename(verilog_file)} / {moduleName}")
-                c.attr(margin="10")
-
-                label = f'<<table bgcolor="{table_color}" border="0" cellborder="0" cellspacing="1" style="rounded"><tr><td><font color="{th_font_color}">{moduleName}</font></td></tr>{"".join(ports)}<tr><td><FONT POINT-SIZE="4"> </FONT></td></tr></table>>'
-                c.node(
-                    moduleName,
-                    shape="none",
-                    label=label,
-                    fontsize="11pt",
-                    href=f"{verilog_file.split('/')[-1]}.html#{moduleName}",
-                    tooltip=f"Module-Header: {moduleName}\\nFilename: {os.path.basename(verilog_file)}",
-                    group="g1",
-                )
-                sub_first = None
-                for sub in module["sub"]:
-                    if sub[0] in modules:
-                        instance_name, portmapping, paramapping = instance_get(sub)
-                        sargs = []
-                        for argName, arg in modules[sub[0]]["params"].items():
-                            default = arg.get("default", "?")
-                            pvalue = paramapping.get(argName, default)
-                            color = row_colors[len(sargs) % 2]
-                            sargs.append(f'<tr><td bgcolor="{color}" port="{argName}"><font color="{td_font_color}"><I>{argName}={pvalue}</I></font></td></tr>')
-                        sports = []
-                        for argName, arg in modules[sub[0]]["args"].items():
-                            if not arg.get("defines"):
-                                ptitle = portmapping.get(argName, argName).replace("&", "AND")
-                                color = row_colors[len(sports) % 2]
-                                sports.append(f'<tr><td bgcolor="{color}" port="{argName}"><font color="{td_font_color}">{ptitle}</font></td></tr>')
-
-                        label = f'<<table bgcolor="{table_color}" border="0" cellborder="0" cellspacing="1" style="rounded"><tr><td><font color="{th_font_color}">{instance_name}</font></td></tr>{"".join(sports)}<tr><td><FONT POINT-SIZE="4"> </FONT></td></tr></table>>'
-
-                        group = ""
-                        if not sub_first:
-                            sub_first = instance_name
-                            group = "g1"
-
-                        c.node(
-                            f"{moduleName}_{instance_name}",
-                            shape="none",
-                            label=label,
-                            fontsize="11pt",
-                            href=f"{verilog_file.split('/')[-1]}.html#{moduleName}",
-                            tooltip=f"Instance: {instance_name} -> {sub[0]}",
-                            group=group,
-                        )
-                        c.edge(
-                            moduleName,
-                            f"{moduleName}_{instance_name}",
-                            dir="none",
-                            style="invis",
-                            fontsize="11pt",
-                        )
-
-            with gAllMin.subgraph(name=f"cluster_{cluster_n}") as c:
-                c.attr(style="filled,rounded", color="#EFEFEF")
-                c.attr(label=f"{os.path.basename(verilog_file)}/{moduleName}")
-                c.attr(ranksep="0.1")
-                c.attr(margin="0")
-                label = f'<<table bgcolor="{table_color}" border="0" cellborder="0" cellspacing="1" style="rounded"><tr><td><font color="{th_font_color}">{moduleName}</font></td></tr></table>>'
-                c.node(
-                    moduleName,
-                    shape="none",
-                    label=label,
-                    fontsize="11pt",
-                    href=f"{verilog_file.split('/')[-1]}.html#{moduleName}",
-                    tooltip=f"Module-Header: {moduleName}\\nFilename: {os.path.basename(verilog_file)}",
-                    group="g1",
-                )
-                sub_first = None
-                for sub in module["sub"]:
-                    if sub[0] in modules:
-                        instance_name, portmapping, paramapping = instance_get(sub)
-                        label = f'<<table bgcolor="{table_color}" border="0" cellborder="0" cellspacing="1" style="rounded"><tr><td><font color="{th_font_color}">{instance_name}</font></td></tr></table>>'
-                        group = ""
-                        if not sub_first:
-                            sub_first = instance_name
-                            group = "g1"
-
-                        c.node(
-                            f"{moduleName}_{instance_name}",
-                            shape="none",
-                            label=label,
-                            fontsize="11pt",
-                            href=f"{verilog_file.split('/')[-1]}.html#{moduleName}",
-                            tooltip=f"Instance: {instance_name} -> {sub[0]}",
-                            group=group,
-                        )
-                        c.edge(
-                            moduleName,
-                            f"{moduleName}_{instance_name}",
-                            dir="none",
-                            # style="invis",
-                            fontsize="11pt",
-                        )
-
-            # linked instances
-            for moduleNameFrom, moduleFrom in modules.items():
-                for subFrom in moduleFrom["sub"]:
-                    if subFrom[0] == moduleName:
-                        instance_name, portmapping, paramapping = instance_get(subFrom)
-                        mname = f"{moduleNameFrom}_{instance_name}"
-                        subres = patternSub.search(subFrom[1].replace("\n", " ").strip())
-                        portmapping = {}
-                        new_params = []
-                        new_ports = ports.copy()
-
-                        if subres:
-                            instance_name = subres["instance"]
-
-                            for param in subres["parameter"].strip().lstrip("(").rstrip(")").split(","):
-                                splitted = param.strip().lstrip(".").rstrip(")").split("(")
-                                if len(splitted) == 2:
-                                    paramapping[splitted[0]] = splitted[1]
-
-                            for argName, arg in module["params"].items():
-                                default = arg.get("default", "?")
-                                pvalue = paramapping.get(argName, default)
-                                color = row_colors[len(new_params) % 2]
-                                new_params.append(f'<tr><td bgcolor="{color}" port="{argName}"><font color="{td_font_color}"><I>{argName}={pvalue}</I></font></td></tr>')
-                                add_edge(
-                                    sub_edges,
-                                    f"{mname}:{argName}",
-                                    f"{moduleName}:{argName}",
-                                    style="dashed",
-                                )
-
-                            for port in subres["ports"].strip().lstrip("(").rstrip(")").split(","):
-                                splitted = port.strip().lstrip(".").rstrip(")").split("(")
-                                portmapping[splitted[0]] = splitted[1]
-                                for n, np in enumerate(new_ports):
-                                    new_ports[n] = np.replace(f">{splitted[0]}", f">{splitted[1]}")
-
-                        filename = moduleFrom["filename"]
-                        label = f'<<table bgcolor="{table_color}" border="0" cellborder="0" cellspacing="1" style="rounded"><tr><td><font color="{th_font_color}">{moduleNameFrom}/{instance_name}</font></td></tr>{"".join(new_params)}<tr><td><FONT POINT-SIZE="1"> </FONT></td></tr>{"".join(new_ports)}<tr><td><FONT POINT-SIZE="4"> </FONT></td></tr></table>>'
-                        gSub.node(
-                            mname,
-                            shape="none",
-                            label=label,
-                            href=f"{filename.split('/')[-1]}.html#{moduleNameFrom}",
-                            fontsize="11pt",
-                            tooltip=f"Source-Instance: {moduleNameFrom} / {instance_name}",
-                        )
-
-                        for argName, arg in module["args"].items():
-                            if not arg.get("defines"):
-                                if arg.get("direction") == "input":
-                                    add_edge(
-                                        sub_edges,
-                                        f"{mname}:{argName}",
-                                        f"{moduleName}:{argName}",
-                                    )
-                                elif arg.get("direction") == "inout":
-                                    add_edge(
-                                        sub_edges,
-                                        f"{mname}:{argName}",
-                                        f"{moduleName}:{argName}",
-                                        "both",
-                                    )
-                                else:
-                                    add_edge(
-                                        sub_edges,
-                                        f"{mname}:{argName}",
-                                        f"{moduleName}:{argName}",
-                                        "back",
-                                    )
-
-                        add_edgeMin(
-                            sub_edges,
-                            f"{mname}",
-                            f"{moduleName}",
-                            "none",
-                        )
-
-            # linked sub modules
-            for sub in module["sub"]:
-                if sub[0] in modules:
-                    instance_name, portmapping, paramapping = instance_get(sub)
-                    sargs = []
-                    for argName, arg in modules[sub[0]]["params"].items():
-                        default = arg.get("default", "?")
-                        color = row_colors[len(sargs) % 2]
-                        sargs.append(f'<tr><td bgcolor="{color}" port="{argName}"><font color="{td_font_color}"><I>{argName}={default}</I></font></td></tr>')
-                        add_edge(
-                            sub_edges,
-                            f"{moduleName}_{instance_name}:{argName}",
-                            f"{sub[0]}:{argName}",
-                            style="dashed",
-                        )
-
-                    sports = []
-                    for argName, arg in modules[sub[0]]["args"].items():
-                        if not arg.get("defines"):
-                            color = row_colors[len(sports) % 2]
-                            sports.append(f'<tr><td bgcolor="{color}" port="{argName}"><font color="{td_font_color}">{argName}{arg.get("size") or ""}</font></td></tr>')
-                            if arg.get("direction") == "input":
-                                add_edge(
-                                    sub_edges,
-                                    f"{moduleName}_{instance_name}:{argName}",
-                                    f"{sub[0]}:{argName}",
-                                )
-                            elif arg.get("direction") == "inout":
-                                add_edge(
-                                    sub_edges,
-                                    f"{moduleName}_{instance_name}:{argName}",
-                                    f"{sub[0]}:{argName}",
-                                    "both",
-                                )
-                            else:
-                                add_edge(
-                                    sub_edges,
-                                    f"{moduleName}_{instance_name}:{argName}",
-                                    f"{sub[0]}:{argName}",
-                                    "back",
-                                )
-
-                    label = f'<<table bgcolor="{table_color}" border="0" cellborder="0" cellspacing="1" style="rounded"><tr><td><font color="{th_font_color}">{sub[0]}</font></td></tr>{"".join(sargs)}<tr><td><FONT POINT-SIZE="1"> </FONT></td></tr>{"".join(sports)}<tr><td><FONT POINT-SIZE="4"> </FONT></td></tr></table>>'
-                    filename = modules[sub[0]]["filename"]
-                    gSub.node(
-                        sub[0],
-                        shape="none",
-                        label=label,
-                        href=f"{filename.split('/')[-1]}.html#{sub[0]}",
-                        fontsize="11pt",
-                        tooltip=f"Module: {sub[0]}\nFilename: {filename.split('/')[-1]}",
-                    )
-
-            for name, edge in sub_edges.items():
-                gSub.edge(edge["from"], edge["to"], dir=edge["dir"], style=edge["style"])
-
-            fd.write('<table border=0 width=100%><tr><td valign="top" align="left" width=30%>')
-
-            if module.get("comment"):
-                fd.write("<pre>")
-                fd.write(module["comment"].lstrip("/*").rstrip("*/").strip())
-                fd.write("</pre>")
-                fd.write("<br/>\n")
-
-            fd.write("<h3>Module-Ports</h3>\n")
-            fd.write("<table width=90%>\n")
-            fd.write(f'<tr bgcolor="{table_color}"><th>direction</th><th>type</th><th>name</th><th>size</th><th>defines</th><th>comment</th></tr>\n')
+    def node_module(graph, module, name=None, title=None, link=None, group=None):
+        if name is None:
+            name = module["module_name"]
+        if title is None:
+            title = module["module_name"]
+        if link is None:
+            link = module["module_name"]
+        if group is None:
+            group = ""
+        list_params = []
+        if params := module["params"]:
             rn = 0
-            for argName, arg in module["args"].items():
+            for param in params:
                 color = row_colors[rn % 2]
-                fd.write(f'<tr bgcolor="{color}"><td>{arg.get("direction", "")}</td><td>{arg.get("signed", "")} {arg.get("type", "")}</td><td>{argName}</td><td>{arg.get("size", "")}</td><td>{arg.get("defines") or ""}</td><td>{arg.get("comment") or ""}</td></tr>\n')
+                pname = param.get("name") or param.get("value")
+                list_params.append(html_row(color, pname, f"{param.get('name')}={param.get('default')}"))
+                rn += 1
+        list_args = []
+        if args := module["args"]:
+            rn = 0
+            for arg in args:
+                color = row_colors[rn % 2]
+                list_args.append(html_row(color, arg.get("name"), arg.get("name")))
+                rn += 1
+        graph.node(
+            name,
+            shape="none",
+            label=html_node(title, list_params, list_args),
+            fontsize="11pt",
+            tooltip=f"module: {module['module_name']}",
+            href=f"module_{link}.html",
+            group=group,
+        )
+
+    # generate module pages and graphs
+    gAll = graphviz.Digraph("G", format="svg")
+    gAll.attr(rankdir="LR")
+    gAll.node(
+        "Pins",
+        shape="none",
+        label=f'<<table bgcolor="{table_color}" border="0" cellborder="0" cellspacing="1" style="rounded"><tr><td><font color="{th_font_color}">Pins</font></td></tr>{"".join(list_pins)}<tr><td><FONT POINT-SIZE="4"> </FONT></td></tr></table>>',
+        fontsize="11pt",
+        tooltip="Pins",
+        href="Pins.html",
+    )
+    for pinname in pinmapping:
+        gAll.edge(
+            f"Pins:{pinname}",
+            f"{top}:{pinname}",
+            dir="none",
+            fontsize="11pt",
+        )
+
+    gAllClusterN = 0
+    for _name, module in vmodules.items():
+        filepath = module["filepath"]
+        basename = module["basename"]
+        module_name = module["module_name"]
+        # module graph
+        gModule = graphviz.Digraph("G", format="svg")
+        gModule.attr(rankdir="LR")
+        with gModule.subgraph(name="cluster_0") as c:
+            c.attr(style="filled,rounded", color="#CDCDCD")
+            c.attr(label=module["module_name"])
+            c.attr(margin="10")
+            node_module(c, module, group="g1")
+
+            # pins for the top module
+            if module_name == top:
+                gModule.node(
+                    "Pins",
+                    shape="none",
+                    label=f'<<table bgcolor="{table_color}" border="0" cellborder="0" cellspacing="1" style="rounded"><tr><td><font color="{th_font_color}">Pins</font></td></tr>{"".join(list_pins)}<tr><td><FONT POINT-SIZE="4"> </FONT></td></tr></table>>',
+                    fontsize="11pt",
+                    tooltip="Pins",
+                    href="Pins.html",
+                )
+                for pinname in pinmapping:
+                    gModule.edge(
+                        f"Pins:{pinname}",
+                        f"{module_name}:{pinname}",
+                        dir="none",
+                        fontsize="11pt",
+                    )
+
+            # source modules
+            for source_name, source_module in vmodules.items():
+                for sinstance_name, sinstance in source_module["sub"].items():
+                    if sinstance["module_name"] == module["module_name"]:
+                        node_module(gModule, sinstance, sinstance_name, sinstance_name, source_name)
+                        link_modules(gModule, sinstance, sinstance_name, module["module_name"])
+            # sub modules
+            if subs := module["sub"]:
+                snum = 0
+                for instance_name, instance in subs.items():
+                    submodule_name = instance["module_name"]
+                    submodule = vmodules[submodule_name]
+                    group = ""
+                    if snum == 0:
+                        group = "g1"
+                    node_module(c, instance, name=instance_name, group=group)
+                    # invisable link for better layout inside cluster
+                    c.edge(
+                        module["module_name"],
+                        instance_name,
+                        dir="none",
+                        style="invis",
+                        fontsize="11pt",
+                    )
+                    node_module(gModule, submodule)
+                    link_modules(gModule, instance, instance_name, submodule_name)
+                    snum += 1
+
+        # complete graph
+        with gAll.subgraph(name=f"cluster_{gAllClusterN}") as c:
+            gAllClusterN += 1
+            c.attr(style="filled,rounded", color="#CDCDCD")
+            c.attr(label=module["module_name"])
+            c.attr(margin="10")
+            node_module(c, module, group="g1")
+            # sub modules
+            if subs := module["sub"]:
+                snum = 0
+                for instance_name, instance in subs.items():
+                    submodule_name = instance["module_name"]
+                    submodule = vmodules[submodule_name]
+                    group = ""
+                    if snum == 0:
+                        group = "g1"
+                    node_module(c, instance, name=instance_name, group=group)
+                    # invisable link for better layout inside cluster
+                    c.edge(
+                        module["module_name"],
+                        instance_name,
+                        dir="none",
+                        style="invis",
+                        fontsize="11pt",
+                    )
+                    link_modules(gAll, instance, instance_name, submodule_name)
+                    snum += 1
+
+        # module page
+        fd = open(f"{output}/module_{module['module_name']}.html", "w")
+        fd.write(html_begin)
+        fd.write(f"<h1>{module['module_name']} ({basename})</h1>\n")
+        fd.write("<table width=100%><tr><td width=40% valign=top>\n")
+        if comments := module["comments"]:
+            for comment in comments:
+                fd.write("<pre>")
+                fd.write(comment)
+                fd.write("</pre>")
+            fd.write("<hr/>\n")
+        if params := module["params"]:
+            fd.write("<h3>Module-Parameter</h3>\n")
+            fd.write("<table width=90%>\n")
+            fd.write(f'<tr bgcolor="{table_color}"><th>name</th><th>default</th><th>comment</th></tr>\n')
+            rn = 0
+            for param in params:
+                color = row_colors[rn % 2]
+                fd.write(f'<tr bgcolor="{color}"><td>{param.get("name") or ""}</td><td>{param.get("default") or ""}</td><td>{param.get("comments") or ""}</td></tr>\n')
                 rn += 1
             fd.write("</table>\n")
             fd.write("<br>\n")
+        if args := module["args"]:
+            fd.write("<h3>Module-Ports</h3>\n")
+            fd.write("<table width=90%>\n")
+            fd.write(f'<tr bgcolor="{table_color}"><th>direction</th><th>type</th><th>name</th><th>size</th><th>default</th><th>comment</th></tr>\n')
+            rn = 0
+            for arg in args:
+                color = row_colors[rn % 2]
+                fd.write(f'<tr bgcolor="{color}"><td>{arg.get("dir") or ""}</td><td>{arg.get("signed") or ""} {arg.get("type") or ""}</td><td>{arg.get("name") or ""}</td><td>{arg.get("size") or ""}</td><td>{arg.get("default") or ""}</td><td>{arg.get("comments") or ""}</td></tr>\n')
+                rn += 1
+            fd.write("</table>\n")
+            fd.write("<br>\n")
+        if subs := module["sub"]:
+            fd.write("<h3>Sub-Modules</h3>\n")
+            fd.write("<table width=90%>\n")
+            fd.write(f'<tr bgcolor="{table_color}"><th>Instance</th><th>Module</th><th>comment</th></tr>\n')
+            rn = 0
+            for subname, sub in subs.items():
+                color = row_colors[rn % 2]
+                fd.write(f'<tr bgcolor="{color}"><td>{subname}</td><td>{sub.get("module_name") or ""}</td><td>{sub.get("comments") or ""}</td></tr>\n')
+                rn += 1
+            fd.write("</table>\n")
+            fd.write("<br>\n")
+        fd.write("</td><td valign=top>\n")
+        svg_img(gModule, f"module_{module['module_name']}")
+        fd.write("</td></tr></table><br/>\n")
 
-            if module["params"]:
-                fd.write("<h3>Module-Parameter</h3>\n")
-                fd.write("<table width=90%>\n")
-                fd.write(f'<tr bgcolor="{table_color}"><th>name</th><th>size</th><th>default</th></tr>\n')
-                rn = 0
-                for argName, arg in module["params"].items():
-                    color = row_colors[rn % 2]
-                    fd.write(f'<tr bgcolor="{color}"><td>{arg.get("name", "")}</td><td>{arg.get("size", "")}</td><td>{arg.get("default", "")}</td></tr>\n')
-                    rn += 1
-                fd.write("</table>\n")
-                fd.write("<br>\n")
-
-            fd.write('</td><td valign="top" align="right">')
-            svg_img(gSub, moduleName)
-            fd.write("</td></tr></table>")
-
-            if verilog_file in dotsvgs:
-                # svgdata = open(dotsvgs[verilog_file], "r").read()
-                # fd.write(svgdata)
-                fd.write("<h3>Logic</h3>\n")
-                fd.write("<hr/>\n")
-                fd.write(f'<center><a target="_blank" href="{os.path.basename(dotsvgs[verilog_file])}"><img width="90%" src="{os.path.basename(dotsvgs[verilog_file])}" /></a></center>')
-                fd.write("<hr/>\n")
-
-        fd.write("<h3>Verilog-Source</h3>\n")
-        fd.write(f"File: {verilog_file}<br /><br />")
-
-        if verilog_file in fileerrors:
+        if module["filepath"] in fileerrors:
             fd.write("<b>Linter-Output:</b><br/>\n")
             fd.write("<pre><code>")
-            for line in fileerrors[verilog_file]:
+            for line in fileerrors[module["filepath"]]:
                 fd.write(line.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
                 fd.write("\n")
             fd.write("</code></pre>")
             fd.write("<br/>\n")
 
+        # module source
         fd.write("<b>Source:</b><br/>\n")
         fd.write("<pre><code class='language-verilog'>")
-        fd.write(verilogData)
+        fd.write(module["data"])
         fd.write("</code></pre>")
         fd.write("<hr/>\n")
-
         fd.write(html_end)
         fd.close()
 
-    for name, edge in edges_all.items():
-        if not edge["style"]:
-            gAll.edge(edge["from"], edge["to"], dir=edge["dir"], style=edge["style"])
-
-    for name, edge in edges_allMin.items():
-        if not edge["style"]:
-            gAllMin.edge(edge["from"], edge["to"], dir=edge["dir"], style=edge["style"])
-
-    fd = open(f"{output}/pins.html", "w")
+    fd = open(f"{output}/Pins.html", "w")
     fd.write("<html>")
     fd.write(html_begin)
     fd.write("\n")
-    svg_img(gPins, "pins")
+    svg_img(gPins, "Pins")
     fd.write("<br>\n")
     fd.write("\n")
 
@@ -1199,36 +817,26 @@ def verilog2doc(args):
         fd.write(f"Type: {fpga_type}<br/>\n")
         fd.write("<br/>\n")
 
-    for pin_file in glob.glob(os.path.join(os.path.dirname(module["filename"]), "pins.*")):
-        pindata = open(pin_file, "r").read()
-        fd.write("<h3>Pin Constraints</h3>\n")
-        fd.write(f"File: {pin_file}<br />")
-        fd.write("<pre><code class='language-verilog'>")
-        fd.write(pindata)
-        fd.write("</code></pre>")
-        fd.write("<hr/>\n")
-    fd.write("\n")
+    fd.write("<table>\n")
+    fd.write(f'<tr bgcolor="{table_color}"><th>Name</th><th>Pin</th></tr>\n')
+    rn = 0
+    for pinname, pindata in pinmapping.items():
+        color = row_colors[rn % 2]
+        fd.write(f'<tr bgcolor="{color}"><td>{pinname}</td><td>{pindata["pin"]}</td></tr>\n')
+        rn += 1
+    fd.write("</table>\n")
+    fd.write("<br>\n")
+
     fd.write("<br>\n")
     fd.write(html_end)
     fd.close()
 
-    fd = open(f"{output}/main.html", "w")
+    fd = open(f"{output}/Main.html", "w")
     fd.write("<html>")
     fd.write(html_begin)
-    # fd.write(html_menu(modules, dependsGraph))
-    # fd.write(f"<div id=\"main\" class=\"tabcontent\">")
-    fd.write("\n")
-
-    fd.write("<center><table width=70% height=70%><tr><td>")
-    svg_img(gAllMin, "minmain")
-    fd.write("</td></tr></table></center>")
-    fd.write("<br/>")
-    fd.write("<br/>")
-
     fd.write("<center><table width=70% height=70%><tr><td>")
     svg_img(gAll, "main")
     fd.write("</td></tr></table></center>")
-
     fd.write("\n")
     fd.write("<br>\n")
     fd.write(html_end)
@@ -1237,8 +845,8 @@ def verilog2doc(args):
     fd = open(f"{output}/index.html", "w")
     fd.write("<html>")
     fd.write('  <frameset cols="200, *">')
-    fd.write('    <frame src="menu.html" name="menu">')
-    fd.write('    <frame src="main.html" name="main">')
+    fd.write('    <frame src="Menu.html" name="menu">')
+    fd.write('    <frame src="Main.html" name="main">')
     fd.write("  </frameset>")
     fd.write("</html>")
     fd.close()

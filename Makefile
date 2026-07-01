@@ -6,3 +6,6 @@ format:
 
 check:
 	ruff check verilog2doc.py
+
+fix:
+	ruff check --fix verilog2doc.py
