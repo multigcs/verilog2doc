@@ -63,7 +63,7 @@ lint.select = [
     "FURB188",  # slice-to-remove-prefix-or-suffix (FURB188)
     "PLR1716",  # boolean-chained-comparison (PLR1716)
     "RUF022",  # unsorted-dunder-all (RUF022)
-    "RUF015",  # unnecessary-iterable-allocation-for-first-element (RUF015)
+    #"RUF015",  # unnecessary-iterable-allocation-for-first-element (RUF015)
     "B028",  # no-explicit-stacklevel (B028)
     "SIM103",  # needless-bool (SIM103)
     "SIM118",  # in-dict-keys (SIM118)

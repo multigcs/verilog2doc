@@ -175,9 +175,10 @@ def vparser(filepath):
             comments.append(last_block.strip().lstrip("/").strip())
             last_block = ""
         elif last_block.endswith("endmodule"):
-            cleaned = re.sub(r"\(.*\)\s+module ", "module ", last_block.strip())
-            if cleaned.startswith("module "):
-                matches = patternModule.match(last_block)
+            cleaned = re.sub(r"^`.*", "", last_block.strip())
+            cleaned = re.sub(r"\(.*\)\s+module ", "module ", cleaned.strip())
+            if cleaned.strip().startswith("module "):
+                matches = patternModule.match(cleaned)
                 module_name = matches["name"].strip()
                 args = matches["args"]
                 params = matches["params"]
@@ -390,7 +391,10 @@ def verilog2doc(args):
         else:
             print(f"ERROR: top '{top}' module not found")
             print(f"Modules: {', '.join(vmodules.keys())}")
-            exit(1)
+            if not vmodules:
+                exit(1)
+            print(f"FALLBACK: setting top module to '{list(vmodules)[0]}'")
+            top = list(vmodules)[0]
 
     if output is None:
         if "/" in vmodules[top]["filepath"]:
@@ -424,6 +428,15 @@ def verilog2doc(args):
                 if line.startswith("set_io "):
                     realpin = line.split()[-1]
                     pin_name = line.split()[-2]
+                    pinmapping[pin_name] = {
+                        "pin": realpin,
+                    }
+        elif pin_type in {"qsf", "qdf"}:
+            for line in open(pin_file, "r").read().split("\n"):
+                if line.startswith("set_location_assignment "):
+                    print(line.split())
+                    realpin = line.split()[-1]
+                    pin_name = line.split()[1]
                     pinmapping[pin_name] = {
                         "pin": realpin,
                     }
